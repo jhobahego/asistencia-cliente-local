@@ -9,6 +9,31 @@ Prototipo de atención al cliente con LLM open-source 100% local: sin nube, sin 
 | Modesto (CPU-only) | Sin GPU dedicada; todo corre en CPU | 1B–3.8B en GGUF `Q4_K_M` |
 | Potente (NVIDIA) | GPU NVIDIA con CUDA | 7B–14B (rangos aproximados, ver abajo) |
 
+## Requerimientos
+
+| Necesidad | Versión mínima | Para qué se usa |
+|-----------|----------------|-----------------|
+| Docker + Compose v2 (`docker compose`) | Docker 24+ | Opcional pero recomendado: levanta Ollama + Open WebUI. Sin Docker, instalar Ollama nativo (ver `Uso sin Docker`) |
+| Python + venv + pip | Python 3.10+ | Corre la API RAG (`api/`, dependencias en `api/requirements.txt`: `fastapi`, `uvicorn`, `pydantic`, `requests`) |
+| Ollama CLI (`ollama`) | Última estable | Descarga el modelo una sola vez (`scripts/pull-models.sh` o `ollama pull ...`); el servidor ya corre en Docker |
+| curl | Cualquiera reciente | Probar `/health` y `POST /v1/chat` |
+| Puertos libres | — | `3000` (Open WebUI), `8000` (API), `11434` (Ollama) |
+| Hardware modesto | 8 GB RAM, ~4 GB disco libre | Modelo 3B `Q4_K_M` (~2 GB) + imágenes Docker; CPU-only funciona |
+
+### Linux
+
+- Docker Engine + plugin Compose, con el servicio en ejecución y el usuario en el grupo `docker` (o usar `sudo`).
+- `python3`, `python3-venv`, `pip`, `bash`, `curl`, `git`.
+- Verificar con: `docker --version`, `docker compose version`, `python3 --version`, `ollama --version`, `bash scripts/test-local.sh`.
+
+### Windows (PowerShell)
+
+- Windows 10/11 de 64 bits con WSL2 + Docker Desktop (backend WSL2) en ejecución.
+- Python 3.10+ desde `python.org` con la opción `Add to PATH` marcada (incluye `pip` y `venv`).
+- PowerShell 5.1+ (incluido en Windows) + `curl.exe` (incluido desde Windows 10). Git opcional, recomendado.
+- Ollama: instalar `Ollama Desktop para Windows` para usar `ollama pull`, o descargar el modelo con `docker exec -it <contenedor-ollama> ollama pull qwen2.5:3b-instruct-q4_K_M`.
+- Verificar con: `docker --version`, `docker compose version`, `python --version`, `ollama --version`, `curl.exe --version`.
+
 ## Quickstart (Linux)
 
 ```bash
@@ -46,6 +71,50 @@ docker compose up -d
 ollama pull qwen2.5:3b-instruct-q4_K_M
 
 # 3. API RAG. La API NO carga .env sola (sin dotenv): exportarlo antes.
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
+pip install -r api/requirements.txt
+Get-Content .env | Where-Object { $_ -match '\S' -and -not $_.TrimStart().StartsWith('#') } | ForEach-Object { $k,$v = $_ -split '=', 2; Set-Item "env:$($k.Trim())" $v.Trim() }
+uvicorn api.main:app --port $env:API_PORT
+
+# 4. Probar
+curl.exe localhost:8000/health
+```
+
+## Uso sin Docker (Ollama nativo)
+
+Si no quieres usar Docker, basta con Ollama instalado en el equipo más la API. Sin Docker no hay chat web en `http://localhost:3000` (Open WebUI corre en contenedor); la API en `http://localhost:8000` funciona igual porque solo llama a `http://localhost:11434`.
+
+### Sin Docker en Linux
+
+```bash
+# 1. Instalar Ollama (una sola vez): https://ollama.com/download
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 2. Servidor + modelo (una sola vez el pull)
+ollama serve &
+ollama pull qwen2.5:3b-instruct-q4_K_M
+curl localhost:11434/api/tags
+
+# 3. API RAG (igual que con Docker)
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r api/requirements.txt
+set -a; source .env; set +a
+uvicorn api.main:app --port "${API_PORT:-8000}"
+
+# 4. Probar
+curl localhost:8000/health
+```
+
+### Sin Docker en Windows (PowerShell)
+
+```powershell
+# 1. Instalar Ollama Desktop desde https://ollama.com/download (queda corriendo en segundo plano)
+
+# 2. Modelo (una sola vez)
+ollama pull qwen2.5:3b-instruct-q4_K_M
+curl.exe localhost:11434/api/tags
+
+# 3. API RAG (igual que con Docker)
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install -r api/requirements.txt
 Get-Content .env | Where-Object { $_ -match '\S' -and -not $_.TrimStart().StartsWith('#') } | ForEach-Object { $k,$v = $_ -split '=', 2; Set-Item "env:$($k.Trim())" $v.Trim() }
