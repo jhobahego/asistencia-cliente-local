@@ -1,171 +1,208 @@
-"""Tiny keyword-based RAG over local markdown docs.
+"""Vector RAG over the local knowledge base: ChromaDB + Ollama.
 
-No vector dependencies on purpose: this must stay light on a 7.2 GB machine.
-Chunks are markdown sections; ranking is word-overlap scoring with
-accent-insensitive normalization, light plural stemming, fuzzy prefix
-matching and a small domain synonym map, so paraphrases of the FAQ
-(e.g. "interior" vs "todo el pais") still retrieve the right section.
+Retrieval is cosine similarity over persisted embeddings, gated by the
+measured hybrid rule so semantically close but unrelated chunks never reach
+the model. There is no keyword fallback: an empty gate result means the
+refusal path in ``api/system_prompt.txt`` takes over.
 """
-import unicodedata
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Any
 
-DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
+import chromadb
+import ollama
+from chromadb.config import Settings
 
-# Files that are meta-documentation, not answerable knowledge base content.
-EXCLUDED_FILES = {"MODELOS.md", "BENCHMARK.md", "EVALUACION.md"}
+from api import config
+from api.embeddings import OllamaEmbedder
+from api.lexical import lexical_evidence
 
-# Common Spanish function words that add noise to overlap scoring.
-STOPWORDS = {
-    "que", "para", "con", "los", "las", "del", "una", "uno", "por",
-    "como", "esta", "este", "esto", "son", "hay", "tiene", "tengo",
-    "hacen", "hace", "sus", "mis", "tus", "les", "ese", "esa",
-}
-
-# Domain synonyms for the tiny FAQ vocabulary. Both keys and values use
-# the normalized + stemmed forms produced below (no accents, lowercase,
-# plural already stripped: "pais" stays "pais", "horas" -> "hora",
-# "enviamos" -> "enviamo", "devoluciones" -> "devolucion").
-# Covers the paraphrases seen in EVALUACION.md that exact overlap missed:
-# Q4 "interior" vs doc "todo el pais", Q4 "envio" vs doc "enviamos".
-SYNONYMS = {
-    "interior": {"pais"},
-    "pais": {"interior"},
-    "envio": {"enviamo", "enviar", "enviar"},
-    "enviamo": {"envio"},
-    "tarda": {"hora", "demora"},
-    "tardan": {"hora"},
-    "demora": {"tarda", "hora"},
-    "hora": {"tarda", "demora"},
-    "necesito": {"necesita", "requisito"},
-    "pedir": {"solicitar"},
-    "solicitar": {"pedir"},
-    "queda": {"ubicado", "direccion"},
-    "ubicado": {"queda", "direccion"},
-    "direccion": {"queda", "ubicado"},
-    "domicilio": {"envio", "enviamo"},
-    "cuanto": {"costo", "precio"},
-    "costo": {"cuanto", "precio"},
-    "precio": {"cuanto", "costo"},
-}
+PROMPT_PATH = Path(__file__).with_name("system_prompt.txt")
+EMPTY_CONTEXT = "NO SE ENCONTRÓ INFORMACIÓN RELEVANTE EN LA BASE DE CONOCIMIENTO."
 
 
-def _split_sections(text: str) -> list[str]:
-    # Split on "## " headings so each chunk keeps its heading (the question
-    # keywords) together with its answer body. Intro text stays own chunk.
-    sections: list[str] = []
-    current: list[str] = []
-    for line in text.splitlines():
-        if line.startswith("## ") and current:
-            sections.append("\n".join(current).strip())
-            current = [line]
-        else:
-            current.append(line)
-    if current:
-        sections.append("\n".join(current).strip())
-    return [s for s in sections if len(s) > 40]
+class LocalVectorRAG:
+    """Answer questions grounded only on chunks stored in Chroma."""
 
+    def __init__(
+        self,
+        top_k: int | None = None,
+        max_distance: float | None = None,
+        strong_distance: float | None = None,
+        model: str | None = None,
+        embed_model: str | None = None,
+        temperature: float | None = None,
+        base_url: str | None = None,
+        chroma_path: str | Path | None = None,
+        collection_name: str | None = None,
+        timeout: float | None = None,
+        stream_timeout: float | None = None,
+    ) -> None:
+        self.top_k = max(1, top_k if top_k is not None else config.RAG_TOP_K)
+        self.max_distance = (
+            max_distance if max_distance is not None else config.RAG_MAX_DISTANCE
+        )
+        self.strong_distance = (
+            strong_distance
+            if strong_distance is not None
+            else config.RAG_STRONG_DISTANCE
+        )
+        self.model = model or config.OLLAMA_MODEL
+        self.embed_model = embed_model or config.OLLAMA_EMBED_MODEL
+        self.temperature = (
+            temperature if temperature is not None else config.TEMPERATURE
+        )
+        self.base_url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+        path = Path(chroma_path) if chroma_path is not None else config.CHROMA_DB_PATH
+        name = collection_name or config.CHROMA_COLLECTION
 
-def _load_chunks() -> list[tuple[str, str]]:
-    # Returns (source_filename, section) pairs for every indexed doc.
-    chunks: list[tuple[str, str]] = []
-    if not DOCS_DIR.is_dir():
+        self._chroma = chromadb.PersistentClient(
+            path=str(path),
+            settings=Settings(anonymized_telemetry=False),
+        )
+        self._collection = self._chroma.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine"},
+        )
+        self._embedder = OllamaEmbedder(model=self.embed_model, base_url=self.base_url)
+        # Two clients so each path honors its own timeout: a full answer and
+        # a token stream have very different expected durations.
+        self._chat_client = ollama.AsyncClient(
+            host=self.base_url,
+            timeout=timeout if timeout is not None else config.OLLAMA_TIMEOUT,
+        )
+        self._stream_client = ollama.AsyncClient(
+            host=self.base_url,
+            timeout=(
+                stream_timeout
+                if stream_timeout is not None
+                else config.OLLAMA_STREAM_TIMEOUT
+            ),
+        )
+
+    def count(self) -> int:
+        """Number of chunks currently stored in the collection."""
+        return int(self._collection.count())
+
+    async def retrieve_context(
+        self, query: str, categoria: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return the chunks that pass the hybrid relevance gate."""
+        if self.count() == 0:
+            return []
+
+        vector = await self._embedder.embed_query(query)
+        query_kwargs: dict[str, Any] = {
+            "query_embeddings": [vector],
+            "n_results": self.top_k,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        # Omit the filter entirely when there is no category: Chroma rejects
+        # an empty where clause.
+        if categoria:
+            query_kwargs["where"] = {"categoria": categoria}
+
+        result = await asyncio.to_thread(self._collection.query, **query_kwargs)
+        documents = (result.get("documents") or [[]])[0]
+        metadatas = (result.get("metadatas") or [[]])[0]
+        distances = (result.get("distances") or [[]])[0]
+
+        chunks: list[dict[str, Any]] = []
+        for document, metadata, raw_distance in zip(documents, metadatas, distances):
+            if document is None or raw_distance is None:
+                continue
+            distance = float(raw_distance)
+            if distance > self.max_distance:
+                continue
+            if (
+                distance > self.strong_distance
+                and lexical_evidence(query, document) <= 0
+            ):
+                continue
+            chunks.append(
+                {
+                    "content": document,
+                    "metadata": dict(metadata or {}),
+                    "distance": round(distance, 4),
+                }
+            )
         return chunks
-    for path in sorted(DOCS_DIR.glob("*.md")):
-        if path.name in EXCLUDED_FILES:
-            continue
-        for section in _split_sections(path.read_text(encoding="utf-8")):
-            chunks.append((path.name, section))
-    return chunks
 
+    def _system_prompt(self) -> str:
+        # Read on every call so prompt edits need no service restart.
+        return PROMPT_PATH.read_text(encoding="utf-8").strip()
 
-def _normalize(text: str) -> str:
-    # Strip accents so "envío" and "envio" match; lowercase everything.
-    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore")
-    return folded.decode("ascii").lower()
+    @staticmethod
+    def _format_context(chunks: list[dict[str, Any]]) -> str:
+        if not chunks:
+            return EMPTY_CONTEXT
+        blocks: list[str] = []
+        for chunk in chunks:
+            metadata = chunk.get("metadata") or {}
+            source = metadata.get("source", "desconocido")
+            # Source label goes LAST on purpose: with the label first, the 3B
+            # model echoed the header instead of answering (measured). The
+            # answer comes first, the citation after it.
+            label = f"[Fuente: {source}"
+            if metadata.get("file_type") == "pdf" and "page" in metadata:
+                label += f", página {metadata['page']}"
+            label += "]"
+            blocks.append(f"{chunk.get('content', '')}\n{label}")
+        return "\n\n".join(blocks)
 
+    def build_messages(
+        self, user_query: str, chunks: list[dict[str, Any]]
+    ) -> list[dict[str, str]]:
+        """Build the chat messages with the grounded context block."""
+        system = (
+            f"{self._system_prompt()}\n\n"
+            f"CONTEXT:\n{self._format_context(chunks)}"
+        )
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_query},
+        ]
 
-def _stem(token: str) -> str:
-    # Light plural stemming: "devoluciones" -> "devolucion",
-    # "horas" -> "hora", "enviamos" -> "enviamo". No new dependencies.
-    if len(token) > 5 and token.endswith("es"):
-        return token[:-2]
-    if len(token) > 4 and token.endswith("s"):
-        return token[:-1]
-    return token
+    async def ask(self, query: str, categoria: str | None = None) -> dict[str, Any]:
+        """Retrieve context, generate the full answer, return sources."""
+        chunks = await self.retrieve_context(query, categoria)
+        response = await self._chat_client.chat(
+            model=self.model,
+            messages=self.build_messages(query, chunks),
+            stream=False,
+            options={"temperature": self.temperature},
+        )
+        answer = (response.message.content or "").strip()
+        return {"answer": answer, "sources": chunks}
 
+    async def prepare(
+        self, query: str, categoria: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Retrieve context before streaming so errors precede the headers."""
+        return await self.retrieve_context(query, categoria)
 
-def _tokenize(text: str) -> set[str]:
-    # Normalized alphanumeric stems without stopwords or tiny words.
-    return {
-        _stem(token)
-        for token in "".join(
-            ch if ch.isalnum() else " " for ch in _normalize(text)
-        ).split()
-        if len(token) > 2 and token not in STOPWORDS
-    }
+    async def stream_answer(
+        self, query: str, chunks: list[dict[str, Any]]
+    ) -> AsyncGenerator[str, None]:
+        """Stream answer tokens for an already retrieved context."""
+        stream = await self._stream_client.chat(
+            model=self.model,
+            messages=self.build_messages(query, chunks),
+            stream=True,
+            options={"temperature": self.temperature},
+        )
+        async for part in stream:
+            content = part.message.content
+            if content:
+                yield content
 
-
-def _expand(tokens: set[str]) -> set[str]:
-    # Synonym variants of one token are alternatives for the SAME concept,
-    # so scoring tries each variant but counts the concept only once.
-    # (Counting every variant separately let "necesito"+necesita" stack
-    #  0.7+0.7 on "necesitamos" and outrank the true "devolucion" hit.)
-    return set(tokens)
-
-
-def _common_prefix_len(a: str, b: str) -> int:
-    count = 0
-    for x, y in zip(a, b):
-        if x != y:
-            break
-        count += 1
-    return count
-
-
-def _variant_best(variant: str, doc: set[str]) -> float:
-    # Exact stem match counts 1.0; shared prefix of 4+ chars (covers verb
-    # conjugations like "envio" vs "enviamo") counts 0.7.
-    if variant in doc:
-        return 1.0
-    if len(variant) < 4:
-        return 0.0
-    for d in doc:
-        if len(d) >= 4 and _common_prefix_len(variant, d) >= 4:
-            return 0.7
-    return 0.0
-
-
-def _score(query: set[str], doc: set[str]) -> float:
-    # One value per query concept: the best across its synonym variants.
-    # Best match wins per concept so long docs don't inflate the score.
-    total = 0.0
-    for q in query:
-        variants = {q} | SYNONYMS.get(q, set())
-        total += max(_variant_best(v, doc) for v in variants)
-    return total
-
-
-def get_context(question: str, top_k: int = 3) -> tuple[str, list[str]]:
-    """Return joined context paragraphs and their source files.
-
-    Scoring is synonym-expanded stem overlap between the question and
-    each paragraph, with fuzzy prefix matching for conjugations.
-    Zero overlap on every chunk means nothing answerable was found,
-    so return empty and let the caller trigger the fallback refusal
-    instead of grounding the answer in an unrelated section.
-    """
-    chunks = _load_chunks()
-    if not chunks:
-        return "", []
-    query_tokens = _expand(_tokenize(question))
-    scored = [
-        (_score(query_tokens, _tokenize(para)), source, para)
-        for source, para in chunks
-    ]
-    scored.sort(key=lambda item: item[0], reverse=True)
-    if scored[0][0] == 0:
-        return "", []
-    top = [(s, p) for score, s, p in scored[:top_k] if score > 0]
-    context = "\n\n---\n\n".join(f"[Source: {s}]\n{p}" for s, p in top)
-    sources = sorted({s for s, _ in top})
-    return context, sources
+    async def ask_stream(
+        self, query: str, categoria: str | None = None
+    ) -> AsyncGenerator[str, None]:
+        """Convenience wrapper: retrieve the context, then stream tokens."""
+        chunks = await self.prepare(query, categoria)
+        async for token in self.stream_answer(query, chunks):
+            yield token
