@@ -66,7 +66,7 @@ Model decisions derived from this budget:
 | R7 | scripts + KB migration + `.gitignore` + `.env.example` | delegated writer | done |
 | R8 | `AGENTS.md` + `README.md` + architecture image | parent | done |
 | R9 | End-to-end verification: ingest, real queries, stream, refusals, compileall | parent | done |
-| R10 | Native receipt-driven review | parent | pending |
+| R10 | Native receipt-driven review | parent | disabled: runtime transport unsupported |
 
 ## Acceptance criteria
 
@@ -152,3 +152,20 @@ grounding prompt still refuses. The synonym map remains tunable.
   sampling variance, not a retrieval failure. Documented in AGENTS.md; `0.0`
   reduces it.
 - 2026-11-01: R8 docs written (`AGENTS.md`, `README.md`, architecture image).
+- 2026-11-01: native review attempted with explicit user consent on the full
+  candidate (21 files, 2202 lines). Lineage `review-dfce41431b5bf56b` started,
+  but all four lens captures failed. The three lens child sessions recorded
+  `finish.reason = "length"` with ~147.5k input tokens, 32,000 reasoning tokens
+  and 0 output tokens: the reviewer model exhausted its output budget while
+  reasoning. The fourth lens failed with
+  `immutable_review_transport_unsupported`.
+- 2026-11-01: slice review attempted. A temporary worktree at commit
+  `4523605` and a detached HEAD in the main worktree both returned
+  `immutable_review_transport_unsupported`: the active runtime is not eligible
+  for immutable receipt review, and the supported runtimes (Claude Code,
+  Codex) are not installed. No review approval, receipt, or PASS is claimed.
+- 2026-11-01: the oversized lineage was abandoned with the v2
+  operator-disposition record (no captured results, no findings). The user then
+  authorized `gentle-ai review mode disable --scope clone --cwd <repo>`; RDD is
+  off for this clone only (`global: on`, `clone-local: off`). Delivery remains
+  under ordinary repository policy.
