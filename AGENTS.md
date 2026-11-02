@@ -57,6 +57,20 @@ Windows PowerShell: load `.env` with `Get-Content .env | Where-Object { $_ -matc
 - `bash scripts/test-local.sh` — requires Ollama running and Docker available.
 - Docs-only changes have no runnable RED; use structural checks plus visual readback.
 
+## Notion task tracking
+
+The Notion MCP is configured for this project:
+
+- Project page: https://app.notion.com/p/Proyecto-Kodo-Takai-40ccc16fb0fd809e9546de6713f89d10
+- Task manager: https://app.notion.com/p/Gestor-de-Tareas-40ccc16fb0fd8033bd1ec81ce45108bf
+
+The task manager is the source of truth for task status.
+
+- When a task starts, change its status from `Pendiente` to `En curso` and move it to the corresponding column before starting the work.
+- A task is complete when the assigned user confirms it, or when its work is committed or pushed. On completion, change its status to `Terminado` and move it to the `Terminado` column.
+- Do not mark a task as `Terminado` until one of those completion conditions is met.
+- Keep the project page aligned with the current state of `main`; do not present unmerged feature-branch work as shipped.
+
 ## Conventions
 
 - README is Spanish, neutral register; code, comments, and this file are English.
