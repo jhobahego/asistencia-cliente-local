@@ -87,6 +87,18 @@ class LocalVectorRAG:
         """Number of chunks currently stored in the collection."""
         return int(self._collection.count())
 
+    def categories(self) -> list[str]:
+        """Distinct, non-empty ``categoria`` values currently indexed."""
+        result = self._collection.get(include=["metadatas"])
+        metadatas = result.get("metadatas") or []
+        return sorted(
+            {
+                str(metadata["categoria"])
+                for metadata in metadatas
+                if metadata and metadata.get("categoria")
+            }
+        )
+
     async def retrieve_context(
         self, query: str, categoria: str | None = None
     ) -> list[dict[str, Any]]:

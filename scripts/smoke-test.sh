@@ -88,6 +88,46 @@ else
   fail "(d) /api/v1/ask/stream returned an empty body"
 fi
 
+# (e) Unknown category: rejected with 422 and the indexed values listed.
+# No -f here: a 4xx must be captured instead of aborting the script.
+UNKNOWN_CATEGORY_RESPONSE="$(curl -sS --max-time 10 -w '\n%{http_code}' \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "¿Cuál es el horario de atención?", "categoria": "string"}' \
+  "$API_URL/api/v1/ask" 2>/dev/null || true)"
+UNKNOWN_CATEGORY_STATUS="${UNKNOWN_CATEGORY_RESPONSE##*$'\n'}"
+UNKNOWN_CATEGORY_BODY="${UNKNOWN_CATEGORY_RESPONSE%$'\n'*}"
+if [ "$UNKNOWN_CATEGORY_STATUS" = "422" ]; then
+  pass "(e) /api/v1/ask rejects an unknown categoria with 422"
+else
+  fail "(e) /api/v1/ask returned HTTP ${UNKNOWN_CATEGORY_STATUS:-none} for an unknown categoria"
+fi
+assert_json \
+  "(e) 422 detail lists the available categories" \
+  "$UNKNOWN_CATEGORY_BODY" \
+  "isinstance(data.get('detail', {}).get('available_categories'), list) and bool(data['detail']['available_categories'])"
+
+# (f) A category read from the 422 payload must return sources.
+VALID_CATEGORY="$("$PY" -c "
+import json, sys
+data = json.loads(sys.argv[1])
+categories = data.get('detail', {}).get('available_categories') or []
+if categories:
+    print(next((c for c in categories if 'FAQ' in c), categories[0]))
+" "$UNKNOWN_CATEGORY_BODY" 2>/dev/null || true)"
+if [ -z "$VALID_CATEGORY" ]; then
+  fail "(f) no available category could be read from the 422 payload"
+else
+  FILTERED_BODY="$("$PY" -c "
+import json, sys
+print(json.dumps({'question': '¿Cuál es el horario de atención?', 'categoria': sys.argv[1]}))
+" "$VALID_CATEGORY")"
+  FILTERED="$(post_json /api/v1/ask "$FILTERED_BODY")"
+  assert_json \
+    "(f) /api/v1/ask returns sources for an indexed categoria" \
+    "$FILTERED" \
+    "bool(data.get('sources'))"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAIL: smoke test had failures" >&2
   exit 1

@@ -182,8 +182,10 @@ AND (distance <= RAG_STRONG_DISTANCE OR lexical_evidence(query, chunk) > 0)
 | `POST` | `/v1/chat` | Legacy compatibility; `sources` is `list[str]` |
 | `POST` | `/v1/chat/stream` | Legacy SSE: `sources` → `delta` → `[DONE]` |
 
-`categoria` is an exact-match filter on the `#` heading metadata. An unknown
-category returns no chunks and the assistant refuses.
+`categoria` is an exact match on the indexed `categoria` metadata values (the
+`#` headings). An unknown value returns `422` with the indexed values in
+`detail.available_categories`; omit the field or send a blank string to
+disable the filter.
 
 ## Operations
 
@@ -234,7 +236,10 @@ observed.
   `get(include=["metadatas"])` is used to prune deleted sources. Fine at this
   scale, revisit for thousands of chunks.
 - No authentication. Bind to `127.0.0.1` unless the network is trusted.
-- `categoria` is free-form metadata; there is no validation layer.
+- `categoria` values are validated against the categories currently indexed,
+  so a typo fails with `422` instead of the off-domain refusal. The earlier
+  phantom refusal came from Swagger UI injecting the literal `"string"` into
+  the generated example body; the documented example now omits the field.
 
 ## Conventions and non-negotiables
 

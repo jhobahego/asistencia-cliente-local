@@ -9,11 +9,11 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 import ollama
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -34,7 +34,13 @@ class AskRequest(BaseModel):
     """Incoming question with an optional category filter."""
 
     question: str = Field(min_length=1, max_length=2000)
-    categoria: str | None = None
+    categoria: str | None = Field(
+        default=None,
+        description=(
+            "Exact match against indexed `categoria` metadata values. "
+            "An unknown value returns 422 with the available categories."
+        ),
+    )
 
 
 class SourceModel(BaseModel):
@@ -59,6 +65,18 @@ class LegacyChatResponse(BaseModel):
     sources: list[str]
 
 
+_ASK_BODY_EXAMPLES = {
+    "sin_categoria": {
+        "summary": "No category filter",
+        "description": (
+            "Omit categoria unless you know the exact indexed value; "
+            "an unknown value is rejected with 422."
+        ),
+        "value": {"question": "¿Cuál es el horario de atención?"},
+    }
+}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Create the vector RAG and the generation semaphore once per process."""
@@ -75,6 +93,25 @@ def _question(payload: AskRequest) -> str:
     if not question:
         raise HTTPException(status_code=422, detail="question must not be blank")
     return question
+
+
+async def _category(rag: LocalVectorRAG, categoria: str | None) -> str | None:
+    """Normalize and validate the optional exact-match category filter."""
+    if categoria is None:
+        return None
+    value = categoria.strip()
+    if not value:
+        return None
+    available = await asyncio.to_thread(rag.categories)
+    if value not in available:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": f"Unknown categoria: {value!r}",
+                "available_categories": available,
+            },
+        )
+    return value
 
 
 def _ollama_unavailable() -> HTTPException:
@@ -143,21 +180,28 @@ def health(request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/v1/ask", response_model=AskResponse)
-async def ask(payload: AskRequest, request: Request) -> AskResponse:
+async def ask(
+    request: Request,
+    payload: Annotated[AskRequest, Body(openapi_examples=_ASK_BODY_EXAMPLES)],
+) -> AskResponse:
     """Answer a question grounded on the local knowledge base."""
     rag: LocalVectorRAG = request.app.state.rag
     question = _question(payload)
+    categoria = await _category(rag, payload.categoria)
     result = await _answer(
         rag,
         request.app.state.semaphore,
         question,
-        payload.categoria,
+        categoria,
     )
     return AskResponse(**result)
 
 
 @app.post("/api/v1/ask/stream")
-async def ask_stream(payload: AskRequest, request: Request) -> StreamingResponse:
+async def ask_stream(
+    request: Request,
+    payload: Annotated[AskRequest, Body(openapi_examples=_ASK_BODY_EXAMPLES)],
+) -> StreamingResponse:
     """Stream answer tokens as plain text.
 
     Retrieval runs before the response starts so failures still map to a
@@ -166,7 +210,8 @@ async def ask_stream(payload: AskRequest, request: Request) -> StreamingResponse
     rag: LocalVectorRAG = request.app.state.rag
     semaphore: asyncio.Semaphore = request.app.state.semaphore
     question = _question(payload)
-    chunks = await _prepare(rag, question, payload.categoria)
+    categoria = await _category(rag, payload.categoria)
+    chunks = await _prepare(rag, question, categoria)
 
     async def tokens() -> AsyncIterator[str]:
         try:
@@ -201,11 +246,12 @@ async def legacy_chat(payload: AskRequest, request: Request) -> LegacyChatRespon
     """Legacy endpoint kept for existing clients."""
     rag: LocalVectorRAG = request.app.state.rag
     question = _question(payload)
+    categoria = await _category(rag, payload.categoria)
     result = await _answer(
         rag,
         request.app.state.semaphore,
         question,
-        payload.categoria,
+        categoria,
     )
     return LegacyChatResponse(
         answer=result["answer"],
@@ -221,7 +267,8 @@ async def legacy_chat_stream(
     rag: LocalVectorRAG = request.app.state.rag
     semaphore: asyncio.Semaphore = request.app.state.semaphore
     question = _question(payload)
-    chunks = await _prepare(rag, question, payload.categoria)
+    categoria = await _category(rag, payload.categoria)
+    chunks = await _prepare(rag, question, categoria)
     sources = _source_files(chunks)
 
     async def events() -> AsyncIterator[str]:
