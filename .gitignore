@@ -6,3 +6,4 @@ ollama/
 open-webui/
 *.gguf
 chroma_db/
+.atl/
