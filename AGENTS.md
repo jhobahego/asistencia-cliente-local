@@ -132,6 +132,7 @@ Linux/macOS when `python` is not on `PATH`, and `py -3` on Windows when the
 | `DB_POOL_TIMEOUT` | `10` | Seconds to wait for a free pooled connection |
 | `DB_CONNECT_TIMEOUT` | `5` | Connect timeout; a dead host answers 503 fast instead of hanging the request |
 | `DB_ECHO` | `false` | Echo generated SQL |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `asistencia` | Compose-only: credentials and database created by the `postgres` service. Not read by `api/config.py` |
 
 `.env` is optional. `api/config.py` loads it from the repository root with
 `python-dotenv` at import time; variables already exported in the process
@@ -206,7 +207,12 @@ disable the filter.
   `python scripts/dev.py ingest --reset`, and re-measure the gate. Never mix
   spaces.
 - Deleting `chroma_db/` is safe: it is a generated artifact.
-- Load the relational schema before using `/api/v1/pqrsd`:
+- Start the relational store with `docker compose up -d postgres`; the official
+  entrypoint loads `db/schema.sql` and `db/seed.sql` on first boot, so
+  `DATABASE_URL=postgresql+psycopg://asistencia:asistencia@localhost:5432/asistencia`
+  works immediately. Init scripts run only on an empty data volume: to re-seed,
+  `docker compose down -v` and start it again. To use an existing server
+  instead, load the schema by hand:
   `psql "$DATABASE_URL" -f db/schema.sql` and then
   `psql "$DATABASE_URL" -f db/seed.sql`. Without `DATABASE_URL` those routes
   answer 503 and the RAG keeps working.

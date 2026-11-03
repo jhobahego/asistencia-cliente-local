@@ -37,10 +37,10 @@ pregunta ──embedding──> top_k ──compuerta──> prompt ──Ollama
 
 | Necesidad | Versión mínima | Para qué se usa |
 |-----------|----------------|-----------------|
-| Docker + Compose v2 (`docker compose`) | Docker 24+ | Opcional: levanta Ollama + Open WebUI. Sin Docker, instalar Ollama nativo |
+| Docker + Compose v2 (`docker compose`) | Docker 24+ | Opcional: levanta Ollama, Open WebUI y PostgreSQL 16. Sin Docker, se puede usar Ollama nativo y un PostgreSQL ya instalado |
 | Python + venv + pip | Python 3.10+ | API RAG y CLI `scripts/dev.py` |
 | Ollama CLI (`ollama`) | Última estable | Descarga los modelos una sola vez |
-| Puertos libres | — | `3000` (Open WebUI), `8000` (API), `11434` (Ollama) |
+| Puertos libres | — | `3000` (Open WebUI), `5432` (PostgreSQL), `8000` (API), `11434` (Ollama) |
 | Disco | ~1 GB libre | Modelo de chat (~2 GB aparte) + embeddings (274 MB) + venv (~530 MB) + índice |
 
 Dependencias de Python (`api/requirements.txt`): `fastapi`, `uvicorn`,
@@ -69,7 +69,7 @@ Dependencias de Python (`api/requirements.txt`): `fastapi`, `uvicorn`,
 Los mismos comandos funcionan en Linux, macOS y Windows:
 
 ```bash
-# 1. Ollama + Open WebUI (CPU-only); omitir si ya hay Ollama nativo
+# 1. Ollama + Open WebUI + PostgreSQL (CPU-only); omitir si ya hay Ollama nativo
 docker compose up -d
 
 # 2. Entorno virtual, dependencias y .env (una sola vez)
@@ -84,6 +84,11 @@ python scripts/dev.py ingest
 # 5. API (lee API_PORT desde .env)
 python scripts/dev.py api
 ```
+
+> `docker compose up -d` también levanta PostgreSQL 16 y carga `db/schema.sql`
+> y `db/seed.sql` en el primer arranque. Para levantar solo el stack del RAG:
+> `docker compose up -d ollama open-webui`; para levantar solo la base:
+> `docker compose up -d postgres`.
 
 En otra terminal:
 
@@ -136,6 +141,9 @@ python scripts/dev.py api
 > Open WebUI es un chat directo contra Ollama: no pasa por esta API ni usa la
 > base vectorial. Para consultar el RAG, usar `/api/v1/ask`, el streaming o
 > `http://localhost:8000/docs`.
+>
+> Sin Docker tampoco hay servicio `postgres`: los endpoints de `/api/v1/pqrsd`
+> necesitan un PostgreSQL 13+ propio (con `pg_trgm`) y su `DATABASE_URL`.
 
 ## Base de conocimiento
 
@@ -187,10 +195,18 @@ leen `python scripts/dev.py api` y `python scripts/dev.py smoke`, no
 | `DB_POOL_TIMEOUT` | `10` | Espera máxima por una conexión libre del pool (segundos) |
 | `DB_CONNECT_TIMEOUT` | `5` | Timeout de conexión; una base caída falla rápido en vez de colgar el request |
 | `DB_ECHO` | `false` | Imprime el SQL generado por SQLAlchemy |
+| `POSTGRES_USER` | `asistencia` | Usuario que crea el servicio `postgres` del compose; no lo lee `api/config.py` |
+| `POSTGRES_PASSWORD` | `asistencia` | Clave del mismo usuario; solo para desarrollo local |
+| `POSTGRES_DB` | `asistencia` | Base que crea el servicio `postgres` al inicializarse |
 
 Las variables `DATABASE_URL` y `DB_*` son opcionales. Sin `DATABASE_URL` el
 servicio RAG arranca igual y las rutas de `/api/v1/pqrsd` responden `503`; nunca
 se abre una conexión al importar el módulo.
+
+Las tres variables `POSTGRES_*` solo las consume `docker-compose.yml`: las usa la
+imagen oficial para crear usuario, clave y base en el primer arranque. Si se
+cambia `DATABASE_URL`, hay que cambiar estas en conjunto o el servicio apuntará
+a una base distinta.
 
 Timeouts recomendados:
 
@@ -246,6 +262,30 @@ la capa relacional **nunca** los duplica.
 - `api/db/repository.py`: transacciones, bitácora append-only y máquina de
   estados. `api/db/plazos.py`: suma de días hábiles con festivos.
 
+La vía más corta es el servicio `postgres` del compose: crea el usuario y la base
+con las variables `POSTGRES_*` y ejecuta `db/schema.sql` y `db/seed.sql` cuando
+el volumen de datos está vacío.
+
+```bash
+docker compose up -d postgres
+```
+
+Luego, en `.env`:
+
+```bash
+DATABASE_URL=postgresql+psycopg://asistencia:asistencia@localhost:5432/asistencia
+```
+
+Los scripts de inicialización corren **una sola vez**, al crear el volumen. Si se
+edita el esquema o los catálogos, hay que recrear el volumen y volver a levantar:
+
+```bash
+docker compose down -v
+docker compose up -d postgres
+```
+
+Contra un servidor PostgreSQL 13+ con `pg_trgm` ya instalado, se cargan a mano:
+
 ```bash
 psql "$DATABASE_URL" -f db/schema.sql
 psql "$DATABASE_URL" -f db/seed.sql
@@ -293,10 +333,18 @@ que hay que cargar el calendario oficial antes de confiar en los vencimientos.
   y reconstruir sin riesgo.
 - **PDF:** la ruta está implementada, pero el corpus de ejemplo no incluye PDF.
   Agregar uno pequeño y repetir el smoke test antes de confiar en ella.
-- **Capa relacional:** cargar `db/schema.sql` y `db/seed.sql` antes de usar
-  `/api/v1/pqrsd`. Sin `DATABASE_URL` esas rutas responden `503` y el RAG sigue
-  funcionando. Si la base está caída, el request tarda `DB_CONNECT_TIMEOUT`
-  segundos y no queda colgado.
+- **Capa relacional:** `docker compose up -d postgres` deja la base lista con el
+  esquema y los catálogos cargados; después basta apuntar `DATABASE_URL` a ella.
+  Sin `DATABASE_URL` esas rutas responden `503` y el RAG sigue funcionando. Si la
+  base está caída, el request tarda `DB_CONNECT_TIMEOUT` segundos y no queda
+  colgado.
+- **Reinicializar la base:** los scripts de `docker-entrypoint-initdb.d` solo se
+  ejecutan con el volumen vacío. `docker compose down -v` seguido de
+  `docker compose up -d postgres` es la forma de volver a cargar esquema y
+  catálogos; el volumen es un artefacto de desarrollo.
+- **Puerto 5432 ocupado:** si ya hay un PostgreSQL nativo escuchando en 5432, el
+  contenedor no arranca. Detener el servicio nativo o cambiar el mapeo de puertos
+  en el compose y en `DATABASE_URL`.
 - **Radicado:** el número lo asigna la secuencia de PostgreSQL y un trigger
   rechaza cualquier `UPDATE` sobre la columna. No lo generes en la aplicación.
 
@@ -347,9 +395,22 @@ una brecha o una prueba sin ejecutar.
 
 ## Docker
 
-El `docker-compose.yml` es CPU-only (`docker compose up -d`). Para NVIDIA,
-agregar `gpus: all` al servicio `ollama` en una copia local; no modificar el
-archivo del repositorio:
+El `docker-compose.yml` es CPU-only y define tres servicios:
+
+| Servicio | Imagen | Puerto | Datos |
+|----------|--------|--------|-------|
+| `ollama` | `ollama/ollama` | `11434` | Volumen `ollama` |
+| `open-webui` | `ghcr.io/open-webui/open-webui:main` | `3000` | Volumen `open-webui` |
+| `postgres` | `postgres:16-alpine` | `127.0.0.1:5432` | Volumen `postgres-data`, más `db/schema.sql` y `db/seed.sql` |
+
+`postgres` cubre los endpoints que no son RAG. Se enlaza solo a loopback porque
+usa una clave de desarrollo y la API corre en el host; los fragmentos y
+embeddings siguen en `chroma_db/` y la base nunca los duplica. El healthcheck usa
+`pg_isready` y el contenedor reserva 128 MB de `/dev/shm` para workers paralelos,
+que es lo razonable en una máquina que comparte RAM con Ollama.
+
+Para NVIDIA, agregar `gpus: all` al servicio `ollama` en una copia local; no
+modificar el archivo del repositorio:
 
 ```yaml
 services:
