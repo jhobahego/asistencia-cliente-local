@@ -236,7 +236,7 @@ create table secuencia_radicado (
     ultimo   bigint not null default 0 check (ultimo >= 0)
 );
 
-create or replace function next_radicado(p_vigencia smallint) returns text
+create or replace function next_radicado(p_vigencia integer) returns text
 language plpgsql as $$
 declare
     v_next bigint;

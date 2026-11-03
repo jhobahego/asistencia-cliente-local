@@ -223,8 +223,10 @@ disable the filter.
   `scripts/check_schema.py` validates the models against.
 - Holidays are not seeded. Load the official Colombian calendar into `festivo`;
   otherwise business-day deadlines only skip weekends.
-- The `radicado` is assigned by the PostgreSQL sequence and a trigger rejects any
-  `UPDATE` on the column. Do not generate it in the application.
+- The `radicado` is assigned by the `secuencia_radicado` correlative through
+  `next_radicado(p_vigencia integer)`, and a trigger rejects any `UPDATE` on the
+  column. Do not generate it in the application. The helper takes the year as an
+  integer, so `select next_radicado(2091)` works without a cast.
 - Do not run ingestion concurrently with a heavy query on this machine; both
   compete for the embedding/chat models and RAM.
 - Chroma telemetry is disabled in both `ingest.py` and `rag.py`.

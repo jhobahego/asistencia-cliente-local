@@ -444,7 +444,7 @@ class Pqrsd(Base, TimestampMixin):
         Text,
         nullable=False,
         unique=True,
-        server_default=text("next_radicado(extract(year from now())::smallint)"),
+        server_default=text("next_radicado(extract(year from now())::integer)"),
     )
     tipo_peticion_id: Mapped[int] = mapped_column(
         SmallInteger, ForeignKey("tipo_peticion.id"), nullable=False
