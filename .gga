@@ -1,0 +1,28 @@
+# Gentleman Guardian Angel Configuration
+# Project-level settings for asistencia-cliente-local (Python RAG service).
+# Global defaults live in %APPDATA%\gga\config.
+
+# AI Provider (required)
+PROVIDER="opencode"
+
+# Keep reviews focused on the Python sources that carry the service logic.
+FILE_PATTERNS="*.py"
+
+# Tests and generated files are not reviewed.
+EXCLUDE_PATTERNS="*_test.py,test_*.py"
+
+# Coding standards reviewed by the pre-commit hook.
+RULES_FILE="AGENTS.md"
+
+# Fail closed when the provider answer is ambiguous.
+STRICT_MODE="true"
+
+# This machine is CPU-only; allow a slow local/provider round trip.
+TIMEOUT="600"
+
+# Use the plain primary agent instead of gentle-orchestrator:
+# a one-shot review must not delegate or create feature documents.
+OPENCODE_AGENT="gentleman"
+
+# Base branch for --pr-mode.
+PR_BASE_BRANCH="main"
