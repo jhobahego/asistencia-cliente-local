@@ -36,6 +36,7 @@ commands:
   api     Run uvicorn on API_PORT (extra args go to uvicorn).
   smoke   Run end-to-end HTTP checks against a running API.
   check   Verify Ollama, models, compileall, and docker compose config.
+  rubric  Run the KODO TAKAI rubric bench (see scripts/rubric_check.py).
 """
 
 
@@ -101,6 +102,11 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "check",
         help="verify Ollama, models, source compilation, and compose config",
+    )
+
+    subparsers.add_parser(
+        "rubric",
+        help="run the KODO TAKAI rubric bench (extra args go to the script)",
     )
 
     return parser
@@ -490,6 +496,13 @@ def _check(_args: argparse.Namespace, _extras: list[str]) -> int:
     return 0
 
 
+def _rubric(_args: argparse.Namespace, extras: list[str]) -> int:
+    """Run the rubric bench, forwarding every extra argument to the script."""
+    command = [sys.executable, str(REPO_ROOT / "scripts" / "rubric_check.py")]
+    command.extend(extras)
+    return subprocess.run(command, cwd=REPO_ROOT).returncode
+
+
 _HANDLERS = {
     "setup": _setup,
     "models": _models,
@@ -497,6 +510,7 @@ _HANDLERS = {
     "api": _api,
     "smoke": _smoke,
     "check": _check,
+    "rubric": _rubric,
 }
 
 
@@ -510,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"unrecognized arguments: {' '.join(extras)}")
         parser.print_help()
         return 0
-    if args.command not in {"ingest", "api"} and extras:
+    if args.command not in {"ingest", "api", "rubric"} and extras:
         parser.error(f"unrecognized arguments: {' '.join(extras)}")
 
     if args.command != "setup":
