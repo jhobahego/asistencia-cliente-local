@@ -12,10 +12,12 @@ from typing import Annotated, Any
 import httpx
 import ollama
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import DBAPIError
 
 from api import config
+from api.db.router import router as pqrsd_router
 from api.rag import LocalVectorRAG
 
 # ollama-python rewrites httpx.ConnectError into the builtin ConnectionError,
@@ -77,6 +79,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="asistencia-cliente-local", lifespan=lifespan)
+app.include_router(pqrsd_router)
+
+
+@app.exception_handler(DBAPIError)
+async def _database_unreachable(request: Request, exc: DBAPIError) -> JSONResponse:
+    """A configured but unreachable database degrades to 503, never 500."""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Relational database is unreachable"},
+    )
 
 
 def _question(payload: AskRequest) -> str:
