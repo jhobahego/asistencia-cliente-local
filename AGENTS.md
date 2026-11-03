@@ -264,6 +264,9 @@ observed.
 - The 3B model occasionally over-refuses a paraphrase even when the correct
   chunk is in context (safe failure). Lower `TEMPERATURE` to `0.0` for more
   deterministic behavior, or use a larger chat model when hardware allows.
+- The system prompt does not calculate quotes: the 3B model fails the
+  arithmetic (measured `50 × 40 × 30` as 37.500 and then 30 kg). It reports
+  the route rates from CONTEXT and leaves the total to the cotizador.
 - PDF ingestion is implemented but this corpus has no PDF, so the real PDF
   path is not exercised end to end. Add a small PDF and re-run the smoke test
   before relying on it.
