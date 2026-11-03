@@ -83,36 +83,25 @@ question ──embed(query)──> retrieve top_k ──hybrid gate──> promp
 | `api/system_prompt.txt` | Grounding rules and the exact refusal string |
 | `knowledge_base/` | **Only** indexed corpus (`.md` and `.pdf`) |
 | `docs/` | Meta-documentation (`MODELOS.md`, `BENCHMARK.md`, `EVALUACION.md`), not indexed |
-| `scripts/ingest.sh` | Run `python -m api.ingest` (config loads `.env`) |
-| `scripts/run-api.sh` / `run-api.ps1` | Launch uvicorn on the `API_PORT` from config |
-| `scripts/smoke-test.sh` | End-to-end checks against a running API |
-| `scripts/test-local.sh` | Ollama, compose, models, `compileall` checks |
+| `scripts/dev.py` | Cross-platform CLI: `setup`, `models`, `ingest`, `api`, `smoke`, `check`; re-executes in `.venv` |
 | `chroma_db/` | Generated index; gitignored, never commit |
 
 ## Setup from zero
 
+The same commands work on Linux, macOS, and Windows:
+
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r api/requirements.txt
-cp -n .env.example .env              # optional; skip if .env exists
-bash scripts/pull-models.sh          # chat + embedding models, once
-bash scripts/ingest.sh               # builds chroma_db/, ~30-40 s here
-bash scripts/run-api.sh              # uvicorn on API_PORT from config
+docker compose up -d                 # optional: Ollama + Open WebUI
+python scripts/dev.py setup         # creates .venv, installs deps, seeds .env
+python scripts/dev.py models        # chat + embedding models, once
+python scripts/dev.py ingest        # builds chroma_db/, ~30-40 s here
+python scripts/dev.py api           # uvicorn on API_PORT from config
 ```
 
-Windows PowerShell:
-
-```powershell
-python -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -r api/requirements.txt
-Copy-Item .env.example .env          # optional; skip if .env exists
-$model = python -c "from api import config; print(config.OLLAMA_MODEL)"
-$embed = python -c "from api import config; print(config.OLLAMA_EMBED_MODEL)"
-ollama pull $model
-ollama pull $embed
-python -m api.ingest
-.\scripts\run-api.ps1
-```
+`scripts/dev.py` re-executes itself with the repository `.venv` interpreter,
+so activating the virtual environment is unnecessary. Use `python3` on
+Linux/macOS when `python` is not on `PATH`, and `py -3` on Windows when the
+`python` launcher is not on `PATH`.
 
 ## Environment variables
 
@@ -121,7 +110,7 @@ python -m api.ingest
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct-q4_K_M` | Chat model |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model; change requires re-index |
-| `API_PORT` | `8000` | Port used by the launcher scripts; not read by `api/main.py` |
+| `API_PORT` | `8000` | Port used by `scripts/dev.py api` and `smoke`; not read by `api/main.py` |
 | `RAG_TOP_K` | `4` | Retrieved chunks before the gate |
 | `RAG_MAX_DISTANCE` | `0.50` | Cosine distance ceiling |
 | `RAG_STRONG_DISTANCE` | `0.25` | Distance accepted without lexical evidence |
@@ -196,12 +185,13 @@ disable the filter.
 ## Operations
 
 - Add or edit a document: put it under `knowledge_base/`, then
-  `bash scripts/ingest.sh` (or `POST /api/v1/sync-kb`). A 3B answer is not
+  `python scripts/dev.py ingest` (or `POST /api/v1/sync-kb`). A 3B answer is not
   affected, but ingestion takes ~30–40 s for this corpus.
 - First run after cloning: ingest before querying. `/health` showing
   `kb_chunks: 0` means every answer will be the refusal.
 - Changing the embedding model: update `OLLAMA_EMBED_MODEL`, run
-  `python -m api.ingest --reset`, and re-measure the gate. Never mix spaces.
+  `python scripts/dev.py ingest --reset`, and re-measure the gate. Never mix
+  spaces.
 - Deleting `chroma_db/` is safe: it is a generated artifact.
 - Do not run ingestion concurrently with a heavy query on this machine; both
   compete for the embedding/chat models and RAM.
@@ -212,10 +202,10 @@ disable the filter.
 Run these before reporting the feature complete:
 
 ```bash
-bash scripts/test-local.sh                 # Ollama + compose + models + compileall
-bash scripts/ingest.sh                     # twice; same collection_count both times
-bash scripts/run-api.sh &
-bash scripts/smoke-test.sh                 # health, on-domain, off-domain, stream
+python scripts/dev.py check                # Ollama + compose + models + compileall
+python scripts/dev.py ingest               # twice; same collection_count both times
+python scripts/dev.py api                  # in one terminal
+python scripts/dev.py smoke                # in another terminal
 ```
 
 Expected: `/health` has `kb_chunks: 10` for the sample FAQ; the on-domain

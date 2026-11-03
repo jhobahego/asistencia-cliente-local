@@ -38,9 +38,8 @@ pregunta ──embedding──> top_k ──compuerta──> prompt ──Ollama
 | Necesidad | Versión mínima | Para qué se usa |
 |-----------|----------------|-----------------|
 | Docker + Compose v2 (`docker compose`) | Docker 24+ | Opcional: levanta Ollama + Open WebUI. Sin Docker, instalar Ollama nativo |
-| Python + venv + pip | Python 3.10+ | API RAG y scripts de ingesta |
+| Python + venv + pip | Python 3.10+ | API RAG y CLI `scripts/dev.py` |
 | Ollama CLI (`ollama`) | Última estable | Descarga los modelos una sola vez |
-| curl | Cualquiera reciente | Probar `/health`, la API y el smoke test |
 | Puertos libres | — | `3000` (Open WebUI), `8000` (API), `11434` (Ollama) |
 | Disco | ~1 GB libre | Modelo de chat (~2 GB aparte) + embeddings (274 MB) + venv (~530 MB) + índice |
 
@@ -52,81 +51,66 @@ Dependencias de Python (`api/requirements.txt`): `fastapi`, `uvicorn`,
 
 - Docker Engine + plugin Compose, con el servicio en ejecución y el usuario en
   el grupo `docker` (o usar `sudo`).
-- `python3`, `python3-venv`, `pip`, `bash`, `curl`, `git`.
+- `python3`, `python3-venv`, `pip` y `git`.
 - Verificar con: `docker --version`, `docker compose version`,
   `python3 --version`, `ollama --version`.
 
-### Windows (PowerShell)
+### Windows
 
-- Windows 10/11 de 64 bits con WSL2 + Docker Desktop (backend WSL2) en
-  ejecución.
-- Python 3.10+ desde `python.org` con la opción `Add to PATH` marcada.
-- PowerShell 5.1+ y `curl.exe` (incluido desde Windows 10).
+- Windows 10/11 de 64 bits.
+- Python 3.10+ desde `python.org` con la opción `Add to PATH` marcada; si el
+  lanzador `python` no está disponible, usar `py -3`.
 - Ollama Desktop para Windows, o descargar los modelos dentro del contenedor:
   `docker exec -it <contenedor-ollama> ollama pull qwen2.5:3b-instruct-q4_K_M`.
+- Docker Desktop (backend WSL2) es opcional.
 
-## Quickstart (Linux)
+## Quickstart
+
+Los mismos comandos funcionan en Linux, macOS y Windows:
 
 ```bash
-# 1. Ollama + Open WebUI (CPU-only)
+# 1. Ollama + Open WebUI (CPU-only); omitir si ya hay Ollama nativo
 docker compose up -d
 
-# 2. Configuración opcional: crear .env a partir del ejemplo
-cp -n .env.example .env    # omitir si .env ya existe
+# 2. Entorno virtual, dependencias y .env (una sola vez)
+python scripts/dev.py setup
 
-# 3. Dependencias de Python
-python3 -m venv .venv
-.venv/bin/pip install -r api/requirements.txt
+# 3. Modelos: chat + embeddings (una sola vez)
+python scripts/dev.py models
 
-# 4. Modelos: chat + embeddings (una sola vez)
-bash scripts/pull-models.sh
+# 4. Índice vectorial (una sola vez, o después de cambiar documentos)
+python scripts/dev.py ingest
 
-# 5. Índice vectorial (una sola vez, o después de cambiar documentos)
-bash scripts/ingest.sh
-
-# 6. API (lee API_PORT desde .env)
-bash scripts/run-api.sh
-
-# 7. Probar
-curl localhost:8000/health
-curl -X POST localhost:8000/api/v1/ask \
-  -H 'Content-Type: application/json' \
-  -d '{"question":"¿Cuál es el horario de atención?"}'
+# 5. API (lee API_PORT desde .env)
+python scripts/dev.py api
 ```
+
+En otra terminal:
+
+```bash
+python scripts/dev.py smoke
+```
+
+> `scripts/dev.py` se reejecuta con el intérprete de `.venv` del repositorio,
+> así que no hace falta activar el entorno virtual. Si `python` no está
+> disponible, usar el lanzador equivalente: `python3` en Linux/macOS o `py -3`
+> en Windows (por ejemplo, `python3 scripts/dev.py setup`).
 
 Documentación interactiva: `http://localhost:8000/docs`.
 
-## Quickstart (Windows, PowerShell)
+## Scripts
 
-```powershell
-# 1. Ollama + Open WebUI (CPU-only)
-docker compose up -d
+| Comando | Propósito | Opciones |
+|---------|-----------|----------|
+| `python scripts/dev.py setup` | Crea `.venv`, instala `api/requirements.txt` y copia `.env.example` a `.env` si falta | — |
+| `python scripts/dev.py models` | Descarga el modelo de chat y el de embeddings configurados | — |
+| `python scripts/dev.py ingest` | Reconstruye o actualiza el índice vectorial | `--reset` (borra y recrea la colección) |
+| `python scripts/dev.py api` | Inicia uvicorn en `API_PORT` | `--host`, `--port`, `--reload` |
+| `python scripts/dev.py smoke` | Verifica una API en ejecución | `--url` (por defecto `API_URL` o `http://localhost:API_PORT`) |
+| `python scripts/dev.py check` | Verifica Ollama, modelos, `compileall` y `docker compose config` si Docker está instalado | — |
 
-# 2. Configuración opcional: crear .env a partir del ejemplo
-Copy-Item .env.example .env    # omitir si .env ya existe
-
-# 3. Dependencias
-python -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -r api/requirements.txt
-
-# 4. Modelos (una sola vez); se leen de .env a través de api.config
-$model = python -c "from api import config; print(config.OLLAMA_MODEL)"
-$embed = python -c "from api import config; print(config.OLLAMA_EMBED_MODEL)"
-ollama pull $model
-ollama pull $embed
-
-# 5. Índice vectorial
-python -m api.ingest
-
-# 6. API (lee API_PORT desde .env)
-.\scripts\run-api.ps1
-
-# 7. Probar
-curl.exe localhost:8000/health
-```
-
-> Si PowerShell bloquea la ejecución de scripts, iniciar la API con
-> `powershell -ExecutionPolicy Bypass -File .\scripts\run-api.ps1`.
+Los argumentos adicionales se reenvían a `python -m api.ingest` en `ingest` y a
+`uvicorn` en `api`.
 
 ## Uso sin Docker (Ollama nativo)
 
@@ -136,22 +120,16 @@ Sin Docker no hay Open WebUI en `http://localhost:3000`; la API en
 
 ```bash
 # 1. Instalar Ollama (una sola vez): https://ollama.com/download
-curl -fsSL https://ollama.com/install.sh | sh
+# 2. Iniciar el servidor en otra terminal
+ollama serve
 
-# 2. Dependencias de Python
-python3 -m venv .venv
-.venv/bin/pip install -r api/requirements.txt
+# 3. Entorno, dependencias y modelos
+python scripts/dev.py setup
+python scripts/dev.py models
 
-# 3. Configuración opcional: crear .env a partir del ejemplo
-cp -n .env.example .env    # omitir si .env ya existe
-
-# 4. Servidor + modelos
-ollama serve &
-bash scripts/pull-models.sh
-
-# 5. API RAG
-bash scripts/ingest.sh
-bash scripts/run-api.sh
+# 4. Índice y API RAG
+python scripts/dev.py ingest
+python scripts/dev.py api
 ```
 
 > Open WebUI es un chat directo contra Ollama: no pasa por esta API ni usa la
@@ -170,7 +148,7 @@ bash scripts/run-api.sh
 - Después de agregar o editar documentos:
 
 ```bash
-bash scripts/ingest.sh          # reconstruye/actualiza el índice
+python scripts/dev.py ingest   # reconstruye/actualiza el índice
 # o, con la API levantada:
 curl -X POST localhost:8000/api/v1/sync-kb
 ```
@@ -183,14 +161,15 @@ los que ya no corresponden a ningún archivo.
 `api/config.py` carga `.env` desde la raíz del repositorio con `python-dotenv`
 al importarse. Las variables ya exportadas en el entorno tienen prioridad sobre
 el archivo; si `.env` no existe, se usan los valores por defecto. `API_PORT` lo
-leen los scripts de arranque (`run-api.sh` y `run-api.ps1`), no `api/main.py`.
+leen `python scripts/dev.py api` y `python scripts/dev.py smoke`, no
+`api/main.py`.
 
 | Variable | Valor por defecto | Descripción |
 |----------|-------------------|-------------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | URL del servidor Ollama |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct-q4_K_M` | Modelo de chat |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Modelo de embeddings; cambiarlo exige reindexar |
-| `API_PORT` | `8000` | Puerto de la API para los scripts de arranque |
+| `API_PORT` | `8000` | Puerto por defecto de `scripts/dev.py api` y `smoke` |
 | `RAG_TOP_K` | `4` | Fragmentos recuperados antes de la compuerta |
 | `RAG_MAX_DISTANCE` | `0.50` | Distancia de coseno máxima |
 | `RAG_STRONG_DISTANCE` | `0.25` | Distancia aceptada sin evidencia léxica |
@@ -250,18 +229,19 @@ curl -N -X POST localhost:8000/api/v1/ask/stream \
 - **Embeddings:** `bge-m3` (1024 dimensiones, sin prefijos) o
   `qwen3-embedding:0.6b` (1024 dimensiones, mejor multilingüe).
 - Al cambiar el modelo de embeddings hay que reindexar todo:
-  `python -m api.ingest --reset`.
+  `python scripts/dev.py ingest --reset`.
 
 ## Operación y diagnóstico
 
 - **Primer arranque:** si `/health` devuelve `kb_chunks: 0`, falta ejecutar
-  `bash scripts/ingest.sh`. Sin índice, todas las respuestas son el rechazo.
+  `python scripts/dev.py ingest`. Sin índice, todas las respuestas son el
+  rechazo.
 - **Respuestas lentas:** en CPU-only una respuesta completa tarda ~20–100 s.
   Usar `/api/v1/ask/stream` para ver los tokens mientras se generan.
-- **Reindexar:** `bash scripts/ingest.sh`; tarda ~30–40 s para el corpus de
-  ejemplo.
+- **Reindexar:** `python scripts/dev.py ingest`; tarda ~30–40 s para el corpus
+  de ejemplo.
 - **Cambiar el modelo de embeddings:** actualizar `OLLAMA_EMBED_MODEL`, ejecutar
-  `python -m api.ingest --reset` y volver a medir la compuerta. Mezclar
+  `python scripts/dev.py ingest --reset` y volver a medir la compuerta. Mezclar
   vectores de modelos distintos produce resultados inválidos.
 - **Borrar el índice:** `chroma_db/` es un artefacto generado; se puede borrar
   y reconstruir sin riesgo.
@@ -271,10 +251,10 @@ curl -N -X POST localhost:8000/api/v1/ask/stream \
 ## Verificación
 
 ```bash
-bash scripts/test-local.sh        # Ollama, compose, modelos y compileall
-bash scripts/ingest.sh            # ejecutar dos veces: mismo collection_count
-bash scripts/run-api.sh &
-bash scripts/smoke-test.sh        # health, on-domain, off-domain y stream
+python scripts/dev.py check       # Ollama, compose, modelos y compileall
+python scripts/dev.py ingest      # ejecutar dos veces: mismo collection_count
+python scripts/dev.py api         # en una terminal
+python scripts/dev.py smoke       # en otra terminal, con la API en ejecución
 ```
 
 Resultado esperado: `/health` con `kb_chunks: 10` para la FAQ de ejemplo; una
