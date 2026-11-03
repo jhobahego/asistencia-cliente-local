@@ -1,6 +1,6 @@
 # Evaluación fija del RAG (20 preguntas)
 
-Cómo usarla: hacé cada pregunta a `POST /v1/chat` con el mismo modelo y temperatura 0.2, anotá la respuesta y marcá la rúbrica.
+Cómo usarla: hacé cada pregunta a `POST /api/v1/ask` con el mismo modelo y temperatura 0.2, anotá la respuesta y marcá la rúbrica.
 
 ## Preguntas respondibles (debería contestar desde el FAQ)
 
