@@ -80,10 +80,15 @@ question ──embed(query)──> retrieve top_k ──hybrid gate──> promp
 | `api/ingest.py` | Markdown/PDF chunking, deterministic IDs, prune, upsert, `--reset` |
 | `api/rag.py` | `LocalVectorRAG`: retrieval, gate, prompt, ask/stream |
 | `api/main.py` | FastAPI lifespan, semaphore, canonical endpoints |
+| `api/db/` | Optional PostgreSQL layer: lazy engine, session dependency, models, Pydantic schemas, PQRSD repository, router and business-day deadlines |
 | `api/system_prompt.txt` | Grounding rules and the exact refusal string |
 | `knowledge_base/` | **Only** indexed corpus (`.md` and `.pdf`) |
 | `docs/` | Meta-documentation (`MODELOS.md`, `BENCHMARK.md`, `EVALUACION.md`), not indexed |
-| `scripts/dev.py` | Cross-platform CLI: `setup`, `models`, `ingest`, `api`, `smoke`, `check`; re-executes in `.venv` |
+| `scripts/dev.py` | Cross-platform CLI: `setup`, `models`, `ingest`, `api`, `smoke`, `check`, `rubric`; re-executes in `.venv` |
+| `scripts/rubric_check.py` | KODO TAKAI rubric bench: executable evidence per criterion, estimated score and open gaps |
+| `scripts/check_schema.py` | Offline guard: models vs `db/schema.sql`, Pydantic rejections, business-day arithmetic |
+| `db/schema.sql` | PostgreSQL 13+ DDL: 28 tables, constraints, triggers, `next_radicado`, reporting view, RLS notes |
+| `db/seed.sql` | Catalog seed data taken verbatim from the manuals |
 | `chroma_db/` | Generated index; gitignored, never commit |
 
 ## Setup from zero
@@ -122,6 +127,11 @@ Linux/macOS when `python` is not on `PATH`, and `py -3` on Windows when the
 | `TEMPERATURE` | `0.2` | `0.0` makes refusal/answer behavior more deterministic |
 | `OLLAMA_TIMEOUT` | `300` | Full answer timeout (seconds) |
 | `OLLAMA_STREAM_TIMEOUT` | `400` | Stream timeout (seconds) |
+| `DATABASE_URL` | *(empty)* | PostgreSQL URL (`postgresql+psycopg://...`); empty disables the relational layer and leaves the RAG intact |
+| `DB_POOL_SIZE` | `5` | SQLAlchemy pool size |
+| `DB_POOL_TIMEOUT` | `10` | Seconds to wait for a free pooled connection |
+| `DB_CONNECT_TIMEOUT` | `5` | Connect timeout; a dead host answers 503 fast instead of hanging the request |
+| `DB_ECHO` | `false` | Echo generated SQL |
 
 `.env` is optional. `api/config.py` loads it from the repository root with
 `python-dotenv` at import time; variables already exported in the process
@@ -174,6 +184,11 @@ AND (distance <= RAG_STRONG_DISTANCE OR lexical_evidence(query, chunk) > 0)
 | `POST` | `/api/v1/ask` | `{question, categoria?}` → `{answer, sources[{content, metadata, distance}]}` |
 | `POST` | `/api/v1/ask/stream` | Same input; plain-text token stream |
 | `POST` | `/api/v1/sync-kb` | Re-indexes in a worker thread; returns ingest stats |
+| `POST` | `/api/v1/pqrsd` | Files a case; returns the assigned `radicado` and its deadline |
+| `GET` | `/api/v1/pqrsd` | Lists cases; filters `estado`, `dependencia_id`, `limit`, `offset` |
+| `GET` | `/api/v1/pqrsd/{radicado}` | Reads one case with its state log and attachments |
+| `PATCH` | `/api/v1/pqrsd/{radicado}` | Moves the case to another status and logs the transition |
+| `POST` | `/api/v1/pqrsd/{radicado}/anexos` | Attaches a SHA-256 file hash to the case |
 
 `categoria` is an exact match on the indexed `categoria` metadata values (the
 `#` headings). An unknown value returns `422` with the indexed values in
@@ -191,6 +206,14 @@ disable the filter.
   `python scripts/dev.py ingest --reset`, and re-measure the gate. Never mix
   spaces.
 - Deleting `chroma_db/` is safe: it is a generated artifact.
+- Load the relational schema before using `/api/v1/pqrsd`:
+  `psql "$DATABASE_URL" -f db/schema.sql` and then
+  `psql "$DATABASE_URL" -f db/seed.sql`. Without `DATABASE_URL` those routes
+  answer 503 and the RAG keeps working.
+- Holidays are not seeded. Load the official Colombian calendar into `festivo`;
+  otherwise business-day deadlines only skip weekends.
+- The `radicado` is assigned by the PostgreSQL sequence and a trigger rejects any
+  `UPDATE` on the column. Do not generate it in the application.
 - Do not run ingestion concurrently with a heavy query on this machine; both
   compete for the embedding/chat models and RAM.
 - Chroma telemetry is disabled in both `ingest.py` and `rag.py`.
@@ -201,14 +224,22 @@ Run these before reporting the feature complete:
 
 ```bash
 python scripts/dev.py check                # Ollama + compose + models + compileall
+python scripts/dev.py rubric               # rubric bench: contract, validation, model state
+python scripts/check_schema.py             # models vs db/schema.sql, contracts, deadlines
 python scripts/dev.py ingest               # twice; same collection_count both times
 python scripts/dev.py api                  # in one terminal
 python scripts/dev.py smoke                # in another terminal
 ```
 
-Expected: `/health` has `kb_chunks: 10` for the sample FAQ; the on-domain
-question returns a non-empty answer and sources; the off-domain question
-returns `sources: []` and the exact refusal; the stream returns text.
+Expected: `/health` has `kb_chunks` greater than 0 (504 with the current
+manuals); the on-domain question returns a non-empty answer and sources; the
+off-domain question returns `sources: []` and the exact refusal; the stream
+returns text.
+
+`python scripts/dev.py rubric --database-url "$DATABASE_URL" --db-write` is the
+only check that exercises the relational schema (constraints, triggers, audit
+trail, radicado and concurrency). Without a database that criterion is reported
+as unverifiable, not as passed.
 
 TDD exception: the repo has no pytest dependency or test suite. The runnable
 checks are `compileall`, ingest idempotency and the end-to-end smoke test.
@@ -223,6 +254,11 @@ observed.
 - PDF ingestion is implemented but this corpus has no PDF, so the real PDF
   path is not exercised end to end. Add a small PDF and re-run the smoke test
   before relying on it.
+- This machine has no PostgreSQL and no Docker: `db/schema.sql` is validated with
+  a PostgreSQL parser and cross-checked against the ORM metadata, but it was
+  never executed against a server. Run
+  `python scripts/dev.py rubric --database-url ... --db-write` before claiming
+  the database criterion.
 - `api/system_prompt.txt` is re-read on every request; context headers are
   deliberately placed at the END of each block (source labels first caused the
   3B model to echo the header instead of answering).

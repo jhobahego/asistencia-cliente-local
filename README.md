@@ -108,6 +108,7 @@ Documentación interactiva: `http://localhost:8000/docs`.
 | `python scripts/dev.py api` | Inicia uvicorn en `API_PORT` | `--host`, `--port`, `--reload` |
 | `python scripts/dev.py smoke` | Verifica una API en ejecución | `--url` (por defecto `API_URL` o `http://localhost:API_PORT`) |
 | `python scripts/dev.py check` | Verifica Ollama, modelos, `compileall` y `docker compose config` si Docker está instalado | — |
+| `python scripts/dev.py rubric` | Banco de pruebas de la rúbrica KODO TAKAI: contrato HTTP, validación, modelo local y base de datos | `--live-ai`, `--database-url`, `--db-write`, `--json`, `--verbose`, `--strict` |
 
 Los argumentos adicionales se reenvían a `python -m api.ingest` en `ingest` y a
 `uvicorn` en `api`.
@@ -181,6 +182,15 @@ leen `python scripts/dev.py api` y `python scripts/dev.py smoke`, no
 | `TEMPERATURE` | `0.2` | Temperatura de generación (`0.0` = más determinista) |
 | `OLLAMA_TIMEOUT` | `300` | Timeout de respuesta completa (segundos) |
 | `OLLAMA_STREAM_TIMEOUT` | `400` | Timeout de streaming (segundos) |
+| `DATABASE_URL` | vacío | URL de PostgreSQL (`postgresql+psycopg://...`); vacío desactiva la capa relacional |
+| `DB_POOL_SIZE` | `5` | Conexiones del pool de SQLAlchemy |
+| `DB_POOL_TIMEOUT` | `10` | Espera máxima por una conexión libre del pool (segundos) |
+| `DB_CONNECT_TIMEOUT` | `5` | Timeout de conexión; una base caída falla rápido en vez de colgar el request |
+| `DB_ECHO` | `false` | Imprime el SQL generado por SQLAlchemy |
+
+Las variables `DATABASE_URL` y `DB_*` son opcionales. Sin `DATABASE_URL` el
+servicio RAG arranca igual y las rutas de `/api/v1/pqrsd` responden `503`; nunca
+se abre una conexión al importar el módulo.
 
 Timeouts recomendados:
 
@@ -197,6 +207,16 @@ Timeouts recomendados:
 | `POST` | `/api/v1/ask` | `{question, categoria?}` → `{answer, sources[{content, metadata, distance}]}` |
 | `POST` | `/api/v1/ask/stream` | Misma entrada; respuesta token por token en texto plano |
 | `POST` | `/api/v1/sync-kb` | Reindexa `knowledge_base/` en un hilo aparte |
+| `POST` | `/api/v1/pqrsd` | Radica una PQRSD y devuelve su radicado y vencimiento |
+| `GET` | `/api/v1/pqrsd` | Lista casos con `estado`, `dependencia_id`, `limit` y `offset` |
+| `GET` | `/api/v1/pqrsd/{radicado}` | Consulta un caso con su bitácora de estados y sus anexos |
+| `PATCH` | `/api/v1/pqrsd/{radicado}` | Cambia el estado y registra la transición en la bitácora |
+| `POST` | `/api/v1/pqrsd/{radicado}/anexos` | Adjunta el hash SHA-256 de un archivo al caso |
+
+Los cinco endpoints de `/api/v1/pqrsd` dependen de `DATABASE_URL`. El body se
+valida **antes** de tocar la base: un payload inválido devuelve `422` aunque no
+haya base configurada; una petición válida sin base devuelve `503`, y una base
+inalcanzable también `503` después de `DB_CONNECT_TIMEOUT` segundos.
 
 `categoria` es un filtro exacto sobre la metadata del encabezado `#`. Una
 categoría inexistente devuelve `sources: []` y la respuesta de rechazo.
@@ -208,6 +228,34 @@ curl -N -X POST localhost:8000/api/v1/ask/stream \
   -H 'Content-Type: application/json' \
   -d '{"question":"¿Hacen envíos a domicilio?"}'
 ```
+
+## Capa relacional (opcional)
+
+El índice vectorial guarda conocimiento; PostgreSQL guarda el expediente. Esa
+división es deliberada: los fragmentos y los embeddings viven en `chroma_db/` y
+la capa relacional **nunca** los duplica.
+
+- `db/schema.sql`: 28 tablas con restricciones, índices, triggers, la función
+  `next_radicado`, una vista de vencidas y la política de row level security
+  documentada. Requiere PostgreSQL 13+ y la extensión `pg_trgm`.
+- `db/seed.sql`: catálogos tomados de los manuales (plazos de la Resolución 369
+  de 2019, canales, atributos del buen servicio, enfoque diferencial y glosario
+  de lenguaje ciudadano).
+- `api/db/models.py`: modelos SQLAlchemy 2.0. `api/db/schemas.py`: contratos
+  Pydantic con `extra="forbid"` y validadores cruzados.
+- `api/db/repository.py`: transacciones, bitácora append-only y máquina de
+  estados. `api/db/plazos.py`: suma de días hábiles con festivos.
+
+```bash
+psql "$DATABASE_URL" -f db/schema.sql
+psql "$DATABASE_URL" -f db/seed.sql
+python scripts/check_schema.py    # modelos vs DDL, contratos y días hábiles
+```
+
+`scripts/check_schema.py` no necesita servidor: compara modelos y DDL, prueba los
+rechazos de Pydantic y la aritmética de días hábiles. Los **festivos no vienen
+cargados**: sin filas en `festivo` el cálculo solo excluye fines de semana, así
+que hay que cargar el calendario oficial antes de confiar en los vencimientos.
 
 ## Modelos recomendados
 
@@ -245,20 +293,57 @@ curl -N -X POST localhost:8000/api/v1/ask/stream \
   y reconstruir sin riesgo.
 - **PDF:** la ruta está implementada, pero el corpus de ejemplo no incluye PDF.
   Agregar uno pequeño y repetir el smoke test antes de confiar en ella.
+- **Capa relacional:** cargar `db/schema.sql` y `db/seed.sql` antes de usar
+  `/api/v1/pqrsd`. Sin `DATABASE_URL` esas rutas responden `503` y el RAG sigue
+  funcionando. Si la base está caída, el request tarda `DB_CONNECT_TIMEOUT`
+  segundos y no queda colgado.
+- **Radicado:** el número lo asigna la secuencia de PostgreSQL y un trigger
+  rechaza cualquier `UPDATE` sobre la columna. No lo generes en la aplicación.
 
 ## Verificación
 
 ```bash
 python scripts/dev.py check       # Ollama, compose, modelos y compileall
+python scripts/check_schema.py    # modelos SQLAlchemy vs db/schema.sql
 python scripts/dev.py ingest      # ejecutar dos veces: mismo collection_count
 python scripts/dev.py api         # en una terminal
 python scripts/dev.py smoke       # en otra terminal, con la API en ejecución
 ```
 
-Resultado esperado: `/health` con `kb_chunks: 10` para la FAQ de ejemplo; una
-pregunta del dominio devuelve respuesta y fuentes; una pregunta fuera del
-dominio devuelve `sources: []` y el texto exacto
+Resultado esperado: `/health` con `kb_chunks` mayor que 0 (504 con los cuatro
+manuales actuales); una pregunta del dominio devuelve respuesta y fuentes; una
+pregunta fuera del dominio devuelve `sources: []` y el texto exacto
 `No tengo esa información en mi base local`.
+
+## Banco de pruebas de la rúbrica
+
+`scripts/rubric_check.py` traduce los cuatro criterios de la rúbrica KODO TAKAI
+a pruebas ejecutables y emite un puntaje estimado sobre 60 junto con las brechas
+que impiden el nivel sobresaliente. Por defecto no escribe nada: levanta la API
+en proceso con `TestClient`, valida contratos y esquemas, y salta lo que necesita
+un servidor real.
+
+```bash
+python scripts/dev.py rubric                  # contrato, validación y estado del modelo
+python scripts/dev.py rubric --live-ai        # + latencia, fidelidad, rechazo e inyección
+python scripts/dev.py rubric --json           # informe legible por máquina
+python scripts/dev.py rubric --database-url "postgresql+psycopg://usuario:clave@localhost:5432/asistencia" --db-write
+```
+
+| Criterio | Sin flags | Con `--live-ai` | Con `--database-url` |
+|----------|-----------|-----------------|----------------------|
+| 1. Rendimiento de IA local | índice, dimensiones, modelos instalados, presupuesto de RAM, frase de rechazo | p50/p95, primer token, fidelidad al contexto, rechazo fuera de dominio, inyección de prompt | — |
+| 2. Endpoints y lógica | inventario OpenAPI, `/health`, PQRSD, plazos hábiles, máquina de estados, paginación, legacy | respuesta con fuentes, streaming, SSE legacy, `/sync-kb` con `--live-ingest` | alta, consulta y transición de punta a punta con `--db-write` |
+| 3. Validación y seguridad | payloads inválidos, tipos, categoría inexistente, errores 5xx, higiene de secretos | resistencia a inyección de prompt | 404 de radicado inexistente |
+| 4. Base de datos | esquema SQL vs modelos, triggers, índices, normalización, catálogos | — | objetos instalados, 13 restricciones, append-only, auditoría, correlativo y concurrencia |
+
+Sin `DATABASE_URL`, el criterio 4 queda como «no verificable» y su techo es 10
+puntos: el diseño está probado de forma estática, pero no hay evidencia en
+ejecución. `--db-write` crea sus propias filas y las elimina al terminar.
+
+Códigos de salida: `0` sin fallos críticos, `1` con al menos un fallo crítico,
+`2` si no se puede iniciar el banco. `--strict` también devuelve `1` cuando queda
+una brecha o una prueba sin ejecutar.
 
 ## Docker
 
