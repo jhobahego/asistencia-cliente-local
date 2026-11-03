@@ -37,6 +37,7 @@ commands:
   smoke   Run end-to-end HTTP checks against a running API.
   check   Verify Ollama, models, compileall, and docker compose config.
   rubric  Run the KODO TAKAI rubric bench (see scripts/rubric_check.py).
+  db-init Create the relational schema from the models or from db/schema.sql.
 """
 
 
@@ -107,6 +108,31 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "rubric",
         help="run the KODO TAKAI rubric bench (extra args go to the script)",
+    )
+
+    db_init = subparsers.add_parser(
+        "db-init",
+        help="create the relational schema (models by default, DDL on request)",
+    )
+    db_init.add_argument(
+        "--from-schema",
+        action="store_true",
+        help="run db/schema.sql instead of creating the tables from the models",
+    )
+    db_init.add_argument(
+        "--seed",
+        action="store_true",
+        help="load db/seed.sql catalogs when the database is still empty",
+    )
+    db_init.add_argument(
+        "--reset",
+        action="store_true",
+        help="drop every mapped table and the reporting view before creating",
+    )
+    db_init.add_argument(
+        "--database-url",
+        default=None,
+        help="override DATABASE_URL for this run only",
     )
 
     return parser
@@ -503,6 +529,56 @@ def _rubric(_args: argparse.Namespace, extras: list[str]) -> int:
     return subprocess.run(command, cwd=REPO_ROOT).returncode
 
 
+def _db_init(args: argparse.Namespace, _extras: list[str]) -> int:
+    """Create the relational schema, from the models or from db/schema.sql."""
+    if args.database_url:
+        # api.config reads DATABASE_URL at import time, so set it before import.
+        os.environ["DATABASE_URL"] = args.database_url
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from api.db import bootstrap
+    from api.db import engine as db
+
+    db.reset()
+    if db.database_url() is None:
+        print(
+            "FAIL: DATABASE_URL is empty. Export it or pass --database-url.",
+            file=sys.stderr,
+        )
+        return 1
+
+    engine = db.get_engine()
+    source = "db/schema.sql" if args.from_schema else "api/db/models.py"
+
+    try:
+        if args.reset:
+            print("Dropping the mapped tables and the reporting view ...")
+            bootstrap.reset(engine)
+        print(f"Creating the relational schema from {source} ...")
+        stats = (
+            bootstrap.create_from_schema(engine)
+            if args.from_schema
+            else bootstrap.create_from_models(engine)
+        )
+        seed = bootstrap.load_seed(engine) if args.seed else None
+    except bootstrap.BootstrapError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+    except (SQLAlchemyError, OSError) as exc:
+        print(f"FAIL: could not create the schema: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"PASS: {stats['tables']} tables, {stats['views']} view(s), "
+        f"{stats['triggers']} trigger(s), {stats['functions']} function(s)"
+    )
+    if seed is not None:
+        status = "PASS" if seed["applied"] else "SKIP"
+        print(f"{status}: seed - {seed['reason']}")
+    return 0
+
+
 _HANDLERS = {
     "setup": _setup,
     "models": _models,
@@ -511,6 +587,7 @@ _HANDLERS = {
     "smoke": _smoke,
     "check": _check,
     "rubric": _rubric,
+    "db-init": _db_init,
 }
 
 

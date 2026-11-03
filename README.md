@@ -89,6 +89,10 @@ python scripts/dev.py api
 > y `db/seed.sql` en el primer arranque. Para levantar solo el stack del RAG:
 > `docker compose up -d ollama open-webui`; para levantar solo la base:
 > `docker compose up -d postgres`.
+>
+> Sin Docker, el esquema relacional se crea desde los modelos con
+> `python scripts/dev.py db-init --seed`, o desde el DDL con
+> `python scripts/dev.py db-init --from-schema --seed`. Ver «Capa relacional».
 
 En otra terminal:
 
@@ -262,9 +266,11 @@ la capa relacional **nunca** los duplica.
 - `api/db/repository.py`: transacciones, bitácora append-only y máquina de
   estados. `api/db/plazos.py`: suma de días hábiles con festivos.
 
-La vía más corta es el servicio `postgres` del compose: crea el usuario y la base
-con las variables `POSTGRES_*` y ejecuta `db/schema.sql` y `db/seed.sql` cuando
-el volumen de datos está vacío.
+### Con Docker (vía más corta)
+
+El servicio `postgres` del compose crea el usuario y la base con las variables
+`POSTGRES_*` y ejecuta `db/schema.sql` y `db/seed.sql` cuando el volumen de datos
+está vacío.
 
 ```bash
 docker compose up -d postgres
@@ -284,11 +290,42 @@ docker compose down -v
 docker compose up -d postgres
 ```
 
-Contra un servidor PostgreSQL 13+ con `pg_trgm` ya instalado, se cargan a mano:
+### Sin Docker: desde los modelos
+
+Cuando no hay Docker, los modelos SQLAlchemy son la fuente de verdad de las
+tablas: `create_all()` las crea junto con sus restricciones e índices. Lo que el
+ORM no puede expresar de forma portable —la extensión `pg_trgm`, las funciones de
+trigger, los triggers y la vista de vencidas— se replica desde `db/schema.sql` en
+dos fases alrededor de `create_all`, para que el esquema creado desde el código se
+comporte igual que el creado con el DDL.
 
 ```bash
+# contra DATABASE_URL, o contra el servidor que indique --database-url
+python scripts/dev.py db-init --seed
+
+# desde cero, descartando las tablas mapeadas y la vista
+python scripts/dev.py db-init --reset --seed
+```
+
+La operación es idempotente: una segunda corrida sin `--reset` no rompe nada, y
+`--seed` se salta la carga si los catálogos ya tienen filas.
+
+### Sin Docker: desde el DDL
+
+`db/schema.sql` sigue siendo el DDL de referencia y la vía que usa el entrypoint
+de Docker. Se puede ejecutar tal cual, o a través del mismo CLI:
+
+```bash
+python scripts/dev.py db-init --from-schema --seed
+
+# equivalente a:
 psql "$DATABASE_URL" -f db/schema.sql
 psql "$DATABASE_URL" -f db/seed.sql
+```
+
+### Validar los modelos contra el DDL
+
+```bash
 python scripts/check_schema.py    # modelos vs DDL, contratos y días hábiles
 ```
 

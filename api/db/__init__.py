@@ -5,6 +5,10 @@ constraints and indexes; the triggers, the ``next_radicado`` function, the
 reporting view and the row-level-security policy live only in the SQL script,
 because SQLAlchemy cannot express them portably.
 
+Bootstrap: ``api.db.bootstrap`` creates the tables with
+``Base.metadata.create_all()`` and replays those SQL-only objects from the same
+script, so the models stay the single source of truth for the table shape.
+
 Drift guard: ``python scripts/check_schema.py`` compares the mapped metadata
 against ``db/schema.sql``.
 

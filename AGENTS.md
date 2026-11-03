@@ -84,7 +84,7 @@ question ──embed(query)──> retrieve top_k ──hybrid gate──> promp
 | `api/system_prompt.txt` | Grounding rules and the exact refusal string |
 | `knowledge_base/` | **Only** indexed corpus (`.md` and `.pdf`) |
 | `docs/` | Meta-documentation (`MODELOS.md`, `BENCHMARK.md`, `EVALUACION.md`), not indexed |
-| `scripts/dev.py` | Cross-platform CLI: `setup`, `models`, `ingest`, `api`, `smoke`, `check`, `rubric`; re-executes in `.venv` |
+| `scripts/dev.py` | Cross-platform CLI: `setup`, `models`, `ingest`, `api`, `smoke`, `check`, `rubric`, `db-init`; re-executes in `.venv` |
 | `scripts/rubric_check.py` | KODO TAKAI rubric bench: executable evidence per criterion, estimated score and open gaps |
 | `scripts/check_schema.py` | Offline guard: models vs `db/schema.sql`, Pydantic rejections, business-day arithmetic |
 | `db/schema.sql` | PostgreSQL 13+ DDL: 28 tables, constraints, triggers, `next_radicado`, reporting view, RLS notes |
@@ -211,11 +211,16 @@ disable the filter.
   entrypoint loads `db/schema.sql` and `db/seed.sql` on first boot, so
   `DATABASE_URL=postgresql+psycopg://asistencia:asistencia@localhost:5432/asistencia`
   works immediately. Init scripts run only on an empty data volume: to re-seed,
-  `docker compose down -v` and start it again. To use an existing server
-  instead, load the schema by hand:
-  `psql "$DATABASE_URL" -f db/schema.sql` and then
-  `psql "$DATABASE_URL" -f db/seed.sql`. Without `DATABASE_URL` those routes
-  answer 503 and the RAG keeps working.
+  `docker compose down -v` and start it again.
+- Without Docker, create the schema from the models:
+  `python scripts/dev.py db-init --seed`. It runs `Base.metadata.create_all()`
+  and replays the objects SQLAlchemy cannot express (the `pg_trgm` extension,
+  the trigger functions, the triggers and the reporting view) from
+  `db/schema.sql`, so both routes behave the same. Add `--reset` to drop the
+  mapped tables first; `--from-schema` executes the DDL verbatim instead.
+  Without `DATABASE_URL` those routes answer 503 and the RAG keeps working.
+  `db/schema.sql` stays the reference DDL and the artifact
+  `scripts/check_schema.py` validates the models against.
 - Holidays are not seeded. Load the official Colombian calendar into `festivo`;
   otherwise business-day deadlines only skip weekends.
 - The `radicado` is assigned by the PostgreSQL sequence and a trigger rejects any
@@ -260,11 +265,12 @@ observed.
 - PDF ingestion is implemented but this corpus has no PDF, so the real PDF
   path is not exercised end to end. Add a small PDF and re-run the smoke test
   before relying on it.
-- This machine has no PostgreSQL and no Docker: `db/schema.sql` is validated with
-  a PostgreSQL parser and cross-checked against the ORM metadata, but it was
-  never executed against a server. Run
-  `python scripts/dev.py rubric --database-url ... --db-write` before claiming
-  the database criterion.
+- Docker is not installed on this machine, so the `postgres` compose service
+  cannot be used here. The schema is created instead with
+  `python scripts/dev.py db-init`, which was executed against a local
+  PostgreSQL 18.6 server: 28 tables, 9 triggers, the reporting view and the
+  seeded catalogs. The rubric bench's database criterion still requires
+  `python scripts/dev.py rubric --database-url ... --db-write`.
 - `api/system_prompt.txt` is re-read on every request; context headers are
   deliberately placed at the END of each block (source labels first caused the
   3B model to echo the header instead of answering).
