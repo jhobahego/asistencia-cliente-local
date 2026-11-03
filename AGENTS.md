@@ -79,7 +79,7 @@ question ──embed(query)──> retrieve top_k ──hybrid gate──> promp
 | `api/lexical.py` | Spanish lexical evidence used as the precision gate |
 | `api/ingest.py` | Markdown/PDF chunking, deterministic IDs, prune, upsert, `--reset` |
 | `api/rag.py` | `LocalVectorRAG`: retrieval, gate, prompt, ask/stream |
-| `api/main.py` | FastAPI lifespan, semaphore, canonical + legacy endpoints |
+| `api/main.py` | FastAPI lifespan, semaphore, canonical endpoints |
 | `api/system_prompt.txt` | Grounding rules and the exact refusal string |
 | `knowledge_base/` | **Only** indexed corpus (`.md` and `.pdf`) |
 | `docs/` | Meta-documentation (`MODELOS.md`, `BENCHMARK.md`, `EVALUACION.md`), not indexed |
@@ -174,8 +174,6 @@ AND (distance <= RAG_STRONG_DISTANCE OR lexical_evidence(query, chunk) > 0)
 | `POST` | `/api/v1/ask` | `{question, categoria?}` → `{answer, sources[{content, metadata, distance}]}` |
 | `POST` | `/api/v1/ask/stream` | Same input; plain-text token stream |
 | `POST` | `/api/v1/sync-kb` | Re-indexes in a worker thread; returns ingest stats |
-| `POST` | `/v1/chat` | Legacy compatibility; `sources` is `list[str]` |
-| `POST` | `/v1/chat/stream` | Legacy SSE: `sources` → `delta` → `[DONE]` |
 
 `categoria` is an exact match on the indexed `categoria` metadata values (the
 `#` headings). An unknown value returns `422` with the indexed values in

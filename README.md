@@ -197,8 +197,6 @@ Timeouts recomendados:
 | `POST` | `/api/v1/ask` | `{question, categoria?}` → `{answer, sources[{content, metadata, distance}]}` |
 | `POST` | `/api/v1/ask/stream` | Misma entrada; respuesta token por token en texto plano |
 | `POST` | `/api/v1/sync-kb` | Reindexa `knowledge_base/` en un hilo aparte |
-| `POST` | `/v1/chat` | Compatibilidad legacy; `sources` es `list[str]` |
-| `POST` | `/v1/chat/stream` | SSE legacy: `sources` → `delta` → `[DONE]` |
 
 `categoria` es un filtro exacto sobre la metadata del encabezado `#`. Una
 categoría inexistente devuelve `sources: []` y la respuesta de rechazo.
