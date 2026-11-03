@@ -13,7 +13,7 @@ Criteria and default evidence:
         fidelidad al contexto, rechazo fuera de dominio, inyeccion de prompt.
     C2  endpoints y logica de negocio
         inventario OpenAPI, /health, PQRSD, plazos en dias habiles, maquina de
-        estados, radicado, paginacion, endpoints legacy, streaming.
+        estados, radicado, paginacion, ausencia de rutas legacy, streaming.
     C3  validacion, seguridad y errores
         payloads invalidos, campos desconocidos, categoria inexistente, codigos
         HTTP semanticos, inyeccion SQL/XSS, higiene de secretos, autenticacion.
@@ -100,8 +100,6 @@ EXPECTED_PATHS = {
     "/api/v1/pqrsd",
     "/api/v1/pqrsd/{radicado}",
     "/api/v1/pqrsd/{radicado}/anexos",
-    "/v1/chat",
-    "/v1/chat/stream",
 }
 
 EXPECTED_TRIGGERS = (
@@ -630,30 +628,6 @@ def check_ai_live(report: Report, client: object, args: argparse.Namespace) -> N
     except Exception as exc:  # noqa: BLE001
         report.add("C2", "C2.10", "Streaming de tokens", FAIL, _first_line(exc), True)
 
-    # Legacy SSE: sources -> delta -> [DONE].
-    try:
-        legacy = client.post(  # type: ignore[attr-defined]
-            "/v1/chat/stream", json={"question": ON_DOMAIN_QUESTIONS[0]}
-        )
-        text = legacy.text
-        order_ok = (
-            legacy.status_code == 200
-            and '"sources"' in text
-            and '"delta"' in text
-            and text.rstrip().endswith("[DONE]")
-            and text.index('"sources"') < text.index('"delta"')
-        )
-        report.add(
-            "C2",
-            "C2.11",
-            "SSE legacy respeta el orden sources → delta → [DONE]",
-            PASS if order_ok else FAIL,
-            f"HTTP {legacy.status_code}, {len(text)} caracteres",
-            True,
-        )
-    except Exception as exc:  # noqa: BLE001
-        report.add("C2", "C2.11", "SSE legacy", FAIL, _first_line(exc), True)
-
     payload, elapsed, code = ask(OFF_DOMAIN_QUESTION)
     sources = (payload or {}).get("sources") or []
     answer = str((payload or {}).get("answer", "")).strip()
@@ -926,17 +900,19 @@ def check_http_contract(report: Report, client: object, db_configured: bool) -> 
         True,
     )
 
+    # Canonical contract: the legacy /v1/chat pair was removed on purpose, so
+    # it must not come back.
     legacy: list[str] = []
     for path in ("/v1/chat", "/v1/chat/stream"):
         response = client.post(path, json={})  # type: ignore[attr-defined]
-        if response.status_code != 422:
+        if response.status_code != 404:
             legacy.append(f"{path} → HTTP {response.status_code}")
     report.add(
         "C2",
         "C2.8",
-        "Endpoints legacy conservan la validación",
+        "Sin endpoints legacy publicados",
         PASS if not legacy else FAIL,
-        "; ".join(legacy) or "ambos rechazan un payload vacío con 422",
+        "; ".join(legacy) or "ambas rutas responden 404",
         True,
     )
 
@@ -2246,7 +2222,6 @@ def main(argv: list[str] | None = None) -> int:
                 ("C2.9.1", "Respuesta del dominio con fuentes"),
                 ("C2.9.2", "Respuesta del dominio con fuentes"),
                 ("C2.10", "Streaming de tokens en texto plano"),
-                ("C2.11", "SSE legacy respeta el orden sources → delta → [DONE]"),
             ):
                 report.add(
                     code[:2],

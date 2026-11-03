@@ -333,7 +333,7 @@ python scripts/dev.py rubric --database-url "postgresql+psycopg://usuario:clave@
 | Criterio | Sin flags | Con `--live-ai` | Con `--database-url` |
 |----------|-----------|-----------------|----------------------|
 | 1. Rendimiento de IA local | índice, dimensiones, modelos instalados, presupuesto de RAM, frase de rechazo | p50/p95, primer token, fidelidad al contexto, rechazo fuera de dominio, inyección de prompt | — |
-| 2. Endpoints y lógica | inventario OpenAPI, `/health`, PQRSD, plazos hábiles, máquina de estados, paginación, legacy | respuesta con fuentes, streaming, SSE legacy, `/sync-kb` con `--live-ingest` | alta, consulta y transición de punta a punta con `--db-write` |
+| 2. Endpoints y lógica | inventario OpenAPI, `/health`, PQRSD, plazos hábiles, máquina de estados, paginación, ausencia de rutas legacy | respuesta con fuentes, streaming, `/sync-kb` con `--live-ingest` | alta, consulta y transición de punta a punta con `--db-write` |
 | 3. Validación y seguridad | payloads inválidos, tipos, categoría inexistente, errores 5xx, higiene de secretos | resistencia a inyección de prompt | 404 de radicado inexistente |
 | 4. Base de datos | esquema SQL vs modelos, triggers, índices, normalización, catálogos | — | objetos instalados, 13 restricciones, append-only, auditoría, correlativo y concurrencia |
 
