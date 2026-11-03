@@ -12,8 +12,8 @@ else
   PY="python3"
 fi
 
-MODEL="${OLLAMA_MODEL:-qwen2.5:3b-instruct-q4_K_M}"
-EMBED_MODEL="${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
+MODEL="$("$PY" -c 'from api import config; print(config.OLLAMA_MODEL)')"
+EMBED_MODEL="$("$PY" -c 'from api import config; print(config.OLLAMA_EMBED_MODEL)')"
 
 ollama --version
 

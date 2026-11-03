@@ -2,16 +2,21 @@
 
 One module owns defaults so the API and the ingestion CLI always agree.
 Relative paths resolve against the repository root, which keeps behavior
-stable no matter which directory the process starts from. No dotenv: the
-caller (shell, systemd, container) is responsible for exporting the env.
+stable no matter which directory the process starts from. The repository-root
+``.env`` file is loaded here with python-dotenv; variables already exported in
+the process environment take precedence over it.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # This file lives at <repo_root>/api/config.py.
 REPO_ROOT = Path(__file__).resolve().parent.parent
+ENV_FILE = REPO_ROOT / ".env"
+load_dotenv(ENV_FILE)
 
 
 def _env(name: str, default: str) -> str:
@@ -49,9 +54,11 @@ def _resolve_path(name: str, default: str) -> Path:
     return path if path.is_absolute() else (REPO_ROOT / path).resolve()
 
 
+API_PORT = _env_int("API_PORT", 8000, minimum=1)
+
 OLLAMA_BASE_URL = _env("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = _env("OLLAMA_MODEL", "qwen2.5:3b-instruct-q4_K_M")
-OLLAMA_EMBED_MODEL = _env("OLLAMA_EMBED_MODEL", "bge-m3")
+OLLAMA_EMBED_MODEL = _env("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 TEMPERATURE = _env_float("TEMPERATURE", 0.2)
 
 # Retrieval gate. Tuned on the real FAQ with nomic-embed-text: a single

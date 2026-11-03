@@ -5,12 +5,6 @@ kept as an additive compatibility layer for existing clients.
 """
 from __future__ import annotations
 
-import os
-from dotenv import load_dotenv
-
-# Esto busca el archivo .env en la raíz y lo carga automáticamente en la memoria del script
-load_dotenv()
-
 import asyncio
 import json
 from collections.abc import AsyncIterator

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # End-to-end smoke test against a running API.
-# Usage: bash scripts/smoke-test.sh   (API_URL defaults to http://localhost:8000)
+# Usage: bash scripts/smoke-test.sh   (API_URL defaults to API_PORT from config)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
-
-API_URL="${API_URL:-http://localhost:8000}"
-API_URL="${API_URL%/}"
 
 if [ -x .venv/bin/python ]; then
   PY=".venv/bin/python"
 else
   PY="python3"
 fi
+
+API_URL="$("$PY" -c 'import os; from api import config; print(os.getenv("API_URL") or f"http://localhost:{config.API_PORT}")')"
+API_URL="${API_URL%/}"
 
 FAILED=0
 

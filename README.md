@@ -45,7 +45,8 @@ pregunta ──embedding──> top_k ──compuerta──> prompt ──Ollama
 | Disco | ~1 GB libre | Modelo de chat (~2 GB aparte) + embeddings (274 MB) + venv (~530 MB) + índice |
 
 Dependencias de Python (`api/requirements.txt`): `fastapi`, `uvicorn`,
-`pydantic`, `httpx`, `chromadb`, `ollama`, `langchain-text-splitters`, `pypdf`.
+`pydantic`, `httpx`, `chromadb`, `ollama`, `langchain-text-splitters`, `pypdf`,
+`python-dotenv`.
 
 ### Linux
 
@@ -70,21 +71,23 @@ Dependencias de Python (`api/requirements.txt`): `fastapi`, `uvicorn`,
 # 1. Ollama + Open WebUI (CPU-only)
 docker compose up -d
 
-# 2. Modelos: chat + embeddings (una sola vez)
-bash scripts/pull-models.sh
+# 2. Configuración opcional: crear .env a partir del ejemplo
+cp -n .env.example .env    # omitir si .env ya existe
 
 # 3. Dependencias de Python
 python3 -m venv .venv
 .venv/bin/pip install -r api/requirements.txt
 
-# 4. Índice vectorial (una sola vez, o después de cambiar documentos)
+# 4. Modelos: chat + embeddings (una sola vez)
+bash scripts/pull-models.sh
+
+# 5. Índice vectorial (una sola vez, o después de cambiar documentos)
 bash scripts/ingest.sh
 
-# 5. API. No carga .env sola: exportarlo antes.
-set -a; source .env; set +a
-.venv/bin/uvicorn api.main:app --port "${API_PORT:-8000}"
+# 6. API (lee API_PORT desde .env)
+bash scripts/run-api.sh
 
-# 6. Probar
+# 7. Probar
 curl localhost:8000/health
 curl -X POST localhost:8000/api/v1/ask \
   -H 'Content-Type: application/json' \
@@ -99,24 +102,31 @@ Documentación interactiva: `http://localhost:8000/docs`.
 # 1. Ollama + Open WebUI (CPU-only)
 docker compose up -d
 
-# 2. Modelos (una sola vez)
-ollama pull qwen2.5:3b-instruct-q4_K_M
-ollama pull nomic-embed-text
+# 2. Configuración opcional: crear .env a partir del ejemplo
+Copy-Item .env.example .env    # omitir si .env ya existe
 
 # 3. Dependencias
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install -r api/requirements.txt
 
-# 4. Índice vectorial
+# 4. Modelos (una sola vez); se leen de .env a través de api.config
+$model = python -c "from api import config; print(config.OLLAMA_MODEL)"
+$embed = python -c "from api import config; print(config.OLLAMA_EMBED_MODEL)"
+ollama pull $model
+ollama pull $embed
+
+# 5. Índice vectorial
 python -m api.ingest
 
-# 5. API. No carga .env sola: exportarlo antes.
-Get-Content .env | Where-Object { $_ -match '\S' -and -not $_.TrimStart().StartsWith('#') } | ForEach-Object { $k,$v = $_ -split '=', 2; Set-Item "env:$($k.Trim())" $v.Trim() }
-uvicorn api.main:app --port $env:API_PORT
+# 6. API (lee API_PORT desde .env)
+.\scripts\run-api.ps1
 
-# 6. Probar
+# 7. Probar
 curl.exe localhost:8000/health
 ```
+
+> Si PowerShell bloquea la ejecución de scripts, iniciar la API con
+> `powershell -ExecutionPolicy Bypass -File .\scripts\run-api.ps1`.
 
 ## Uso sin Docker (Ollama nativo)
 
@@ -128,16 +138,20 @@ Sin Docker no hay Open WebUI en `http://localhost:3000`; la API en
 # 1. Instalar Ollama (una sola vez): https://ollama.com/download
 curl -fsSL https://ollama.com/install.sh | sh
 
-# 2. Servidor + modelos
+# 2. Dependencias de Python
+python3 -m venv .venv
+.venv/bin/pip install -r api/requirements.txt
+
+# 3. Configuración opcional: crear .env a partir del ejemplo
+cp -n .env.example .env    # omitir si .env ya existe
+
+# 4. Servidor + modelos
 ollama serve &
 bash scripts/pull-models.sh
 
-# 3. API RAG
-python3 -m venv .venv
-.venv/bin/pip install -r api/requirements.txt
+# 5. API RAG
 bash scripts/ingest.sh
-set -a; source .env; set +a
-.venv/bin/uvicorn api.main:app --port "${API_PORT:-8000}"
+bash scripts/run-api.sh
 ```
 
 > Open WebUI es un chat directo contra Ollama: no pasa por esta API ni usa la
@@ -166,16 +180,17 @@ los que ya no corresponden a ningún archivo.
 
 ## Variables de entorno
 
-La API no lee `.env` por sí sola (sin dependencia dotenv). Exportar las
-variables antes de arrancar uvicorn. `API_PORT` solo se usa en la línea de
-comandos de uvicorn.
+`api/config.py` carga `.env` desde la raíz del repositorio con `python-dotenv`
+al importarse. Las variables ya exportadas en el entorno tienen prioridad sobre
+el archivo; si `.env` no existe, se usan los valores por defecto. `API_PORT` lo
+leen los scripts de arranque (`run-api.sh` y `run-api.ps1`), no `api/main.py`.
 
 | Variable | Valor por defecto | Descripción |
 |----------|-------------------|-------------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | URL del servidor Ollama |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct-q4_K_M` | Modelo de chat |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Modelo de embeddings; cambiarlo exige reindexar |
-| `API_PORT` | `8000` | Puerto de uvicorn (flag de línea de comandos) |
+| `API_PORT` | `8000` | Puerto de la API para los scripts de arranque |
 | `RAG_TOP_K` | `4` | Fragmentos recuperados antes de la compuerta |
 | `RAG_MAX_DISTANCE` | `0.50` | Distancia de coseno máxima |
 | `RAG_STRONG_DISTANCE` | `0.25` | Distancia aceptada sin evidencia léxica |
@@ -258,7 +273,7 @@ curl -N -X POST localhost:8000/api/v1/ask/stream \
 ```bash
 bash scripts/test-local.sh        # Ollama, compose, modelos y compileall
 bash scripts/ingest.sh            # ejecutar dos veces: mismo collection_count
-.venv/bin/uvicorn api.main:app --port 8000 &
+bash scripts/run-api.sh &
 bash scripts/smoke-test.sh        # health, on-domain, off-domain y stream
 ```
 

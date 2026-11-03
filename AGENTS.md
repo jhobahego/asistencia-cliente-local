@@ -2,7 +2,7 @@
 
 Agent and contributor guide for `asistencia-cliente-local`: a 100% local
 customer-support RAG service (FastAPI + ChromaDB + Ollama). No cloud, no
-telemetry, no dotenv, no API keys.
+telemetry, no API keys.
 
 Feature branch of record: `feat/rag-vectorial/jhon-hernandez`.
 
@@ -74,7 +74,7 @@ question ──embed(query)──> retrieve top_k ──hybrid gate──> promp
 
 | Path | Role |
 |---|---|
-| `api/config.py` | Single source of env config and repo-root path resolution |
+| `api/config.py` | Single source of env config; loads the repo-root `.env` via python-dotenv and resolves repo-root paths |
 | `api/embeddings.py` | Ollama embed client; nomic document/query prefixes; batching |
 | `api/lexical.py` | Spanish lexical evidence used as the precision gate |
 | `api/ingest.py` | Markdown/PDF chunking, deterministic IDs, prune, upsert, `--reset` |
@@ -83,7 +83,8 @@ question ──embed(query)──> retrieve top_k ──hybrid gate──> promp
 | `api/system_prompt.txt` | Grounding rules and the exact refusal string |
 | `knowledge_base/` | **Only** indexed corpus (`.md` and `.pdf`) |
 | `docs/` | Meta-documentation (`MODELOS.md`, `BENCHMARK.md`, `EVALUACION.md`), not indexed |
-| `scripts/ingest.sh` | Load `.env` and run `python -m api.ingest` |
+| `scripts/ingest.sh` | Run `python -m api.ingest` (config loads `.env`) |
+| `scripts/run-api.sh` / `run-api.ps1` | Launch uvicorn on the `API_PORT` from config |
 | `scripts/smoke-test.sh` | End-to-end checks against a running API |
 | `scripts/test-local.sh` | Ollama, compose, models, `compileall` checks |
 | `chroma_db/` | Generated index; gitignored, never commit |
@@ -93,10 +94,10 @@ question ──embed(query)──> retrieve top_k ──hybrid gate──> promp
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r api/requirements.txt
+cp -n .env.example .env              # optional; skip if .env exists
 bash scripts/pull-models.sh          # chat + embedding models, once
 bash scripts/ingest.sh               # builds chroma_db/, ~30-40 s here
-set -a; source .env; set +a          # API does not load .env itself
-.venv/bin/uvicorn api.main:app --port "${API_PORT:-8000}"
+bash scripts/run-api.sh              # uvicorn on API_PORT from config
 ```
 
 Windows PowerShell:
@@ -104,11 +105,13 @@ Windows PowerShell:
 ```powershell
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install -r api/requirements.txt
-ollama pull qwen2.5:3b-instruct-q4_K_M
-ollama pull nomic-embed-text
+Copy-Item .env.example .env          # optional; skip if .env exists
+$model = python -c "from api import config; print(config.OLLAMA_MODEL)"
+$embed = python -c "from api import config; print(config.OLLAMA_EMBED_MODEL)"
+ollama pull $model
+ollama pull $embed
 python -m api.ingest
-Get-Content .env | Where-Object { $_ -match '\S' -and -not $_.TrimStart().StartsWith('#') } | ForEach-Object { $k,$v = $_ -split '=', 2; Set-Item "env:$($k.Trim())" $v.Trim() }
-uvicorn api.main:app --port $env:API_PORT
+.\scripts\run-api.ps1
 ```
 
 ## Environment variables
@@ -118,7 +121,7 @@ uvicorn api.main:app --port $env:API_PORT
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct-q4_K_M` | Chat model |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model; change requires re-index |
-| `API_PORT` | `8000` | Uvicorn CLI flag only; not read by `api/main.py` |
+| `API_PORT` | `8000` | Port used by the launcher scripts; not read by `api/main.py` |
 | `RAG_TOP_K` | `4` | Retrieved chunks before the gate |
 | `RAG_MAX_DISTANCE` | `0.50` | Cosine distance ceiling |
 | `RAG_STRONG_DISTANCE` | `0.25` | Distance accepted without lexical evidence |
@@ -131,8 +134,11 @@ uvicorn api.main:app --port $env:API_PORT
 | `OLLAMA_TIMEOUT` | `300` | Full answer timeout (seconds) |
 | `OLLAMA_STREAM_TIMEOUT` | `400` | Stream timeout (seconds) |
 
-`.env` is optional and never auto-loaded; export it before starting uvicorn.
-`.env.example` documents the CPU-tuned values. Never commit `.env`.
+`.env` is optional. `api/config.py` loads it from the repository root with
+`python-dotenv` at import time; variables already exported in the process
+environment take precedence over the file, and a missing file falls back to the
+defaults above. `.env.example` documents the CPU-tuned values. Never commit
+`.env`.
 
 ## Ingestion contract
 
@@ -208,7 +214,7 @@ Run these before reporting the feature complete:
 ```bash
 bash scripts/test-local.sh                 # Ollama + compose + models + compileall
 bash scripts/ingest.sh                     # twice; same collection_count both times
-.venv/bin/uvicorn api.main:app --port 8000 &
+bash scripts/run-api.sh &
 bash scripts/smoke-test.sh                 # health, on-domain, off-domain, stream
 ```
 
@@ -246,7 +252,7 @@ observed.
 - README is neutral Spanish; code, comments, docstrings and this file are
   English. No voseo or slang in artifacts.
 - Keep the stack small: `fastapi`, `uvicorn`, `pydantic`, `httpx`, `chromadb`,
-  `ollama`, `langchain-text-splitters`, `pypdf`. No dotenv, no vector DB
+  `ollama`, `langchain-text-splitters`, `pypdf`, `python-dotenv`. No vector DB
   service, no cloud calls.
 - Never commit `.env`, `chroma_db/`, model files or generated caches.
 - Do not change `docker-compose.yml` to a GPU variant on this machine; the

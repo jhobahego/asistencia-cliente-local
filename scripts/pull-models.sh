@@ -3,8 +3,17 @@
 # CPU-only machine (7.2 GB RAM): small Q4_K_M chat models, no ROCm / CUDA.
 set -euo pipefail
 
-MODEL="${OLLAMA_MODEL:-qwen2.5:3b-instruct-q4_K_M}"
-EMBED_MODEL="${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+if [ -x .venv/bin/python ]; then
+  PY=".venv/bin/python"
+else
+  PY="python3"
+fi
+
+MODEL="$("$PY" -c 'from api import config; print(config.OLLAMA_MODEL)')"
+EMBED_MODEL="$("$PY" -c 'from api import config; print(config.OLLAMA_EMBED_MODEL)')"
 
 # Chat: best balance of Spanish quality vs RAM on this hardware.
 ollama pull "$MODEL"
