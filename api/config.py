@@ -51,7 +51,7 @@ def _resolve_path(name: str, default: str) -> Path:
 
 OLLAMA_BASE_URL = _env("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = _env("OLLAMA_MODEL", "qwen2.5:3b-instruct-q4_K_M")
-OLLAMA_EMBED_MODEL = _env("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+OLLAMA_EMBED_MODEL = _env("OLLAMA_EMBED_MODEL", "bge-m3")
 TEMPERATURE = _env_float("TEMPERATURE", 0.2)
 
 # Retrieval gate. Tuned on the real FAQ with nomic-embed-text: a single
