@@ -59,6 +59,21 @@ class PqrsdRepository:
         statement = self._loaded_query().where(Pqrsd.radicado == radicado)
         return self.session.execute(statement).scalar_one_or_none()
 
+    def _reload(self, radicado: str) -> Pqrsd | None:
+        """Re-read a case after a commit, overwriting the identity-map copy.
+
+        ``expire_on_commit=False`` (see ``api/db/engine.py``) keeps the loaded
+        instance alive, so a plain re-query returns the stale object and the
+        selectin-loaded ``eventos`` collection still misses the row the
+        transaction just added. ``populate_existing`` forces the reload.
+        """
+        statement = (
+            self._loaded_query()
+            .where(Pqrsd.radicado == radicado)
+            .execution_options(populate_existing=True)
+        )
+        return self.session.execute(statement).scalar_one_or_none()
+
     def list(
         self,
         estado: EstadoPQRSD | None = None,
@@ -128,7 +143,7 @@ class PqrsdRepository:
             radicado = case.radicado
         self.session.commit()
 
-        created = self.get_by_radicado(radicado)
+        created = self._reload(radicado)
         if created is None:  # pragma: no cover - the row was just committed
             raise Conflict(f"PQRSD {radicado!r} was created but cannot be read back")
         return created
@@ -176,7 +191,7 @@ class PqrsdRepository:
                 "'respondida' requires both respuesta and respondida_en"
             ) from exc
 
-        updated = self.get_by_radicado(radicado)
+        updated = self._reload(radicado)
         if updated is None:  # pragma: no cover - the row was just committed
             raise NotFound(f"PQRSD {radicado!r} not found after update")
         return updated
