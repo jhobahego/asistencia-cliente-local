@@ -266,6 +266,17 @@ la capa relacional **nunca** los duplica.
 - `api/db/repository.py`: transacciones, bitácora append-only y máquina de
   estados. `api/db/plazos.py`: suma de días hábiles con festivos.
 
+`db/seed.sql` **no** trae `dependencia`, `sede`, `tramite` ni `festivo`: solo
+canales, tipos de petición, atributos del servicio, categorías diferenciales y
+glosario. Para radicar una PQRSD hace falta insertar al menos una dependencia,
+porque `pqrsd.dependencia_id` es una clave foránea obligatoria; y mientras
+`festivo` esté vacía los vencimientos solo excluyen fines de semana.
+
+```sql
+insert into dependencia (codigo, nombre)
+values ('DEP-ATN', 'Atención al ciudadano');
+```
+
 ### Con Docker (vía más corta)
 
 El servicio `postgres` del compose crea el usuario y la base con las variables
