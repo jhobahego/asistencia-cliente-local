@@ -5,3 +5,5 @@ __pycache__/
 ollama/
 open-webui/
 *.gguf
+chroma_db/
+.atl/

@@ -1,135 +1,285 @@
-"""Minimal FastAPI RAG service over local Ollama (CPU-only friendly)."""
-import json
-import os
-from pathlib import Path
+"""FastAPI service exposing the local vector RAG over Ollama.
 
-import requests
-from fastapi import FastAPI, HTTPException
+Canonical endpoints live under ``/api/v1``. The legacy ``/v1/chat`` pair is
+kept as an additive compatibility layer for existing clients.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Annotated, Any
+
+import httpx
+import ollama
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from api.rag import get_context
+from api import config
+from api.rag import LocalVectorRAG
 
-# Configuration comes from the environment so docker / systemd can override it.
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct-q4_K_M")
-TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
-RAG_TOP_K = int(os.getenv("RAG_TOP_K", "3"))
-OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
-OLLAMA_STREAM_TIMEOUT = float(os.getenv("OLLAMA_STREAM_TIMEOUT", "180"))
-
-PROMPT_PATH = Path(__file__).with_name("system_prompt.txt")
-
-app = FastAPI(title="asistencia-cliente-local")
+# ollama-python rewrites httpx.ConnectError into the builtin ConnectionError,
+# so the builtin type must be part of the "Ollama is unavailable" mapping.
+OLLAMA_UNAVAILABLE = (
+    httpx.ConnectError,
+    httpx.TimeoutException,
+    ollama.ResponseError,
+    ConnectionError,
+)
 
 
-class ChatRequest(BaseModel):
-    """Incoming chat payload."""
+class AskRequest(BaseModel):
+    """Incoming question with an optional category filter."""
 
     question: str = Field(min_length=1, max_length=2000)
+    categoria: str | None = Field(
+        default=None,
+        description=(
+            "Exact match against indexed `categoria` metadata values. "
+            "An unknown value returns 422 with the available categories."
+        ),
+    )
 
 
-class ChatResponse(BaseModel):
-    """Outgoing chat payload."""
+class SourceModel(BaseModel):
+    """One grounding fragment returned with the answer."""
+
+    content: str
+    metadata: dict[str, Any]
+    distance: float
+
+
+class AskResponse(BaseModel):
+    """Grounded answer plus its traceable sources."""
+
+    answer: str
+    sources: list[SourceModel]
+
+
+class LegacyChatResponse(BaseModel):
+    """Legacy payload: answer plus unique source file names."""
 
     answer: str
     sources: list[str]
 
 
-def _load_system_prompt() -> str:
-    # Read from disk on each request so prompt edits need no restart.
-    return PROMPT_PATH.read_text(encoding="utf-8").strip()
+_ASK_BODY_EXAMPLES = {
+    "sin_categoria": {
+        "summary": "No category filter",
+        "description": (
+            "Omit categoria unless you know the exact indexed value; "
+            "an unknown value is rejected with 422."
+        ),
+        "value": {"question": "¿Cuál es el horario de atención?"},
+    }
+}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Create the vector RAG and the generation semaphore once per process."""
+    app.state.rag = LocalVectorRAG()
+    app.state.semaphore = asyncio.Semaphore(config.LLM_CONCURRENCY_LIMIT)
+    yield
+
+
+app = FastAPI(title="asistencia-cliente-local", lifespan=lifespan)
+
+
+def _question(payload: AskRequest) -> str:
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=422, detail="question must not be blank")
+    return question
+
+
+async def _category(rag: LocalVectorRAG, categoria: str | None) -> str | None:
+    """Normalize and validate the optional exact-match category filter."""
+    if categoria is None:
+        return None
+    value = categoria.strip()
+    if not value:
+        return None
+    available = await asyncio.to_thread(rag.categories)
+    if value not in available:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": f"Unknown categoria: {value!r}",
+                "available_categories": available,
+            },
+        )
+    return value
+
+
+def _ollama_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail=f"Ollama unavailable at {config.OLLAMA_BASE_URL}",
+    )
+
+
+def _internal_error() -> HTTPException:
+    return HTTPException(
+        status_code=500,
+        detail="Internal error while answering the question",
+    )
+
+
+async def _answer(
+    rag: LocalVectorRAG,
+    semaphore: asyncio.Semaphore,
+    question: str,
+    categoria: str | None,
+) -> dict[str, Any]:
+    # Concurrency 1 on this hardware: the semaphore covers retrieval and
+    # generation so a second request never competes for RAM.
+    try:
+        async with semaphore:
+            return await rag.ask(question, categoria)
+    except OLLAMA_UNAVAILABLE as exc:
+        raise _ollama_unavailable() from exc
+    except Exception as exc:
+        raise _internal_error() from exc
+
+
+async def _prepare(
+    rag: LocalVectorRAG, question: str, categoria: str | None
+) -> list[dict[str, Any]]:
+    try:
+        return await rag.prepare(question, categoria)
+    except OLLAMA_UNAVAILABLE as exc:
+        raise _ollama_unavailable() from exc
+    except Exception as exc:
+        raise _internal_error() from exc
+
+
+def _source_files(chunks: list[dict[str, Any]]) -> list[str]:
+    """Unique source names, sorted, for the legacy response shape."""
+    return sorted(
+        {
+            str(chunk["metadata"]["source"])
+            for chunk in chunks
+            if chunk.get("metadata", {}).get("source")
+        }
+    )
 
 
 @app.get("/health")
-def health() -> dict:
-    """Liveness probe (does not call Ollama)."""
-    return {"status": "ok", "model": OLLAMA_MODEL}
+def health(request: Request) -> dict[str, Any]:
+    """Liveness probe; never calls Ollama."""
+    rag: LocalVectorRAG = request.app.state.rag
+    return {
+        "status": "ok",
+        "model": rag.model,
+        "embedding_model": rag.embed_model,
+        "kb_chunks": rag.count(),
+    }
 
 
-@app.post("/v1/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest) -> ChatResponse:
-    """Answer a question grounded on local docs via Ollama."""
-    context, sources = get_context(payload.question, top_k=RAG_TOP_K)
-    system_prompt = _load_system_prompt()
-    user_message = (
-        f"CONTEXT:\n{context}\n\nQUESTION:\n{payload.question.strip()}"
+@app.post("/api/v1/ask", response_model=AskResponse)
+async def ask(
+    request: Request,
+    payload: Annotated[AskRequest, Body(openapi_examples=_ASK_BODY_EXAMPLES)],
+) -> AskResponse:
+    """Answer a question grounded on the local knowledge base."""
+    rag: LocalVectorRAG = request.app.state.rag
+    question = _question(payload)
+    categoria = await _category(rag, payload.categoria)
+    result = await _answer(
+        rag,
+        request.app.state.semaphore,
+        question,
+        categoria,
     )
+    return AskResponse(**result)
+
+
+@app.post("/api/v1/ask/stream")
+async def ask_stream(
+    request: Request,
+    payload: Annotated[AskRequest, Body(openapi_examples=_ASK_BODY_EXAMPLES)],
+) -> StreamingResponse:
+    """Stream answer tokens as plain text.
+
+    Retrieval runs before the response starts so failures still map to a
+    proper HTTP status; only generation errors appear inside the stream.
+    """
+    rag: LocalVectorRAG = request.app.state.rag
+    semaphore: asyncio.Semaphore = request.app.state.semaphore
+    question = _question(payload)
+    categoria = await _category(rag, payload.categoria)
+    chunks = await _prepare(rag, question, categoria)
+
+    async def tokens() -> AsyncIterator[str]:
+        try:
+            async with semaphore:
+                async for token in rag.stream_answer(question, chunks):
+                    yield token
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # headers are already sent, so mark the body
+            yield f"\n[stream error: {exc}]"
+
+    return StreamingResponse(tokens(), media_type="text/plain; charset=utf-8")
+
+
+@app.post("/api/v1/sync-kb")
+async def sync_kb() -> dict[str, Any]:
+    """Re-index the knowledge base in a worker thread."""
+    # Lazy import keeps the heavy ingestion stack out of API startup.
+    from api.ingest import build_or_update_vector_db
+
     try:
-        resp = requests.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json={
-                "model": OLLAMA_MODEL,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                "stream": False,
-                "options": {"temperature": TEMPERATURE},
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        # Ollama down, model missing, or connection refused: surface a 503.
+        stats = await asyncio.to_thread(build_or_update_vector_db)
+    except Exception as exc:
         raise HTTPException(
-            status_code=503,
-            detail=f"Ollama unavailable at {OLLAMA_BASE_URL}: {exc}",
+            status_code=500, detail="Knowledge base sync failed"
         ) from exc
-    data = resp.json()
-    answer = (data.get("message") or {}).get("content", "").strip()
-    if not answer:
-        raise HTTPException(status_code=502, detail="Empty response from model")
-    return ChatResponse(answer=answer, sources=sources)
+    return {"status": "ok", **stats}
+
+
+@app.post("/v1/chat", response_model=LegacyChatResponse)
+async def legacy_chat(payload: AskRequest, request: Request) -> LegacyChatResponse:
+    """Legacy endpoint kept for existing clients."""
+    rag: LocalVectorRAG = request.app.state.rag
+    question = _question(payload)
+    categoria = await _category(rag, payload.categoria)
+    result = await _answer(
+        rag,
+        request.app.state.semaphore,
+        question,
+        categoria,
+    )
+    return LegacyChatResponse(
+        answer=result["answer"],
+        sources=_source_files(result["sources"]),
+    )
 
 
 @app.post("/v1/chat/stream")
-def chat_stream(payload: ChatRequest):
-    """Same grounded answer as /v1/chat, streamed as SSE.
+async def legacy_chat_stream(
+    payload: AskRequest, request: Request
+) -> StreamingResponse:
+    """Legacy SSE stream: sources first, then deltas, then [DONE]."""
+    rag: LocalVectorRAG = request.app.state.rag
+    semaphore: asyncio.Semaphore = request.app.state.semaphore
+    question = _question(payload)
+    categoria = await _category(rag, payload.categoria)
+    chunks = await _prepare(rag, question, categoria)
+    sources = _source_files(chunks)
 
-    First event carries {"sources": [...]} so the client knows the
-    grounding upfront; following events carry {"delta": "..."} text
-    chunks as Ollama generates them; the stream ends with "data: [DONE]".
-    This way the client renders the first words in ~load time instead
-    of waiting for the full ~60s answer on this CPU-only machine.
-    """
-    context, sources = get_context(payload.question, top_k=RAG_TOP_K)
-    system_prompt = _load_system_prompt()
-    user_message = (
-        f"CONTEXT:\n{context}\n\nQUESTION:\n{payload.question.strip()}"
-    )
-
-    def gen():
+    async def events() -> AsyncIterator[str]:
         yield f"data: {json.dumps({'sources': sources})}\n\n"
         try:
-            with requests.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json={
-                    "model": OLLAMA_MODEL,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message},
-                    ],
-                    "stream": True,
-                    "options": {"temperature": TEMPERATURE},
-                },
-                stream=True,
-                timeout=OLLAMA_STREAM_TIMEOUT,
-            ) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    text = (chunk.get("message") or {}).get("content", "")
-                    if text:
-                        yield f"data: {json.dumps({'delta': text})}\n\n"
-                    if chunk.get("done"):
-                        break
-        except requests.RequestException as exc:
+            async with semaphore:
+                async for token in rag.stream_answer(question, chunks):
+                    yield f"data: {json.dumps({'delta': token})}\n\n"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
             yield (
                 "data: "
                 + json.dumps({"error": f"Ollama unavailable: {exc}"})
@@ -137,4 +287,4 @@ def chat_stream(payload: ChatRequest):
             )
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(events(), media_type="text/event-stream")
