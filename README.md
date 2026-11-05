@@ -1,6 +1,6 @@
-# Asistencia al cliente local
+# Translogix Backend
 
-Servicio de atención al cliente con RAG vectorial 100 % local: FastAPI +
+Backend RAG vectorial 100 % local para TransLogix Colombia S.A.S. (TransLogix Express): FastAPI +
 ChromaDB + Ollama. Sin nube, sin telemetría, sin costo por consulta y con los
 datos siempre en el equipo.
 
@@ -16,7 +16,7 @@ El flujo es simple:
 
 ![Arquitectura del RAG vectorial](docs/arquitectura-rag.png)
 
-```
+```text
 knowledge_base/ ──ingesta──> ChromaDB persistente (cosine/HNSW)
                                       ▲
 pregunta ──embedding──> top_k ──compuerta──> prompt ──Ollama──> respuesta
@@ -24,10 +24,10 @@ pregunta ──embedding──> top_k ──compuerta──> prompt ──Ollama
 
 ## Perfiles de hardware
 
-| Perfil | Descripción | Modelos de chat | Embeddings |
-|--------|-------------|-----------------|------------|
-| Modesto (CPU-only) | Sin GPU dedicada; todo corre en CPU | 1B–3.8B en GGUF `Q4_K_M` | `nomic-embed-text` |
-| Potente (NVIDIA) | GPU NVIDIA con CUDA | 7B–14B | `bge-m3` o `qwen3-embedding:0.6b` |
+| Perfil             | Descripción                         | Modelos de chat          | Embeddings                        |
+|--------------------|-------------------------------------|--------------------------|-----------------------------------|
+| Modesto (CPU-only) | Sin GPU dedicada; todo corre en CPU | 1B–3.8B en GGUF `Q4_K_M` | `nomic-embed-text`                |
+| Potente (NVIDIA)   | GPU NVIDIA con CUDA                 | 7B–14B                   | `bge-m3` o `qwen3-embedding:0.6b` |
 
 > Este repositorio está calibrado para el perfil modesto: 4 núcleos, 7.2 GB de
 > RAM y sin CUDA/ROCm. Los modelos y umbrales concretos de esa máquina están
@@ -36,7 +36,7 @@ pregunta ──embedding──> top_k ──compuerta──> prompt ──Ollama
 ## Requerimientos
 
 | Necesidad | Versión mínima | Para qué se usa |
-|-----------|----------------|-----------------|
+| ----------- | ---------------- | ----------------- |
 | Docker + Compose v2 (`docker compose`) | Docker 24+ | Opcional: levanta Ollama, Open WebUI y PostgreSQL 16. Sin Docker, se puede usar Ollama nativo y un PostgreSQL ya instalado |
 | Python + venv + pip | Python 3.10+ | API RAG y CLI `scripts/dev.py` |
 | Ollama CLI (`ollama`) | Última estable | Descarga los modelos una sola vez |
@@ -110,7 +110,7 @@ Documentación interactiva: `http://localhost:8000/docs`.
 ## Scripts
 
 | Comando | Propósito | Opciones |
-|---------|-----------|----------|
+| --------- | ----------- | ---------- |
 | `python scripts/dev.py setup` | Crea `.venv`, instala `api/requirements.txt` y copia `.env.example` a `.env` si falta | — |
 | `python scripts/dev.py models` | Descarga el modelo de chat y el de embeddings configurados | — |
 | `python scripts/dev.py ingest` | Reconstruye o actualiza el índice vectorial | `--reset` (borra y recrea la colección) |
@@ -184,7 +184,7 @@ leen `python scripts/dev.py api` y `python scripts/dev.py smoke`, no
 `api/main.py`.
 
 | Variable | Valor por defecto | Descripción |
-|----------|-------------------|-------------|
+| ---------- | ------------------- | ------------- |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | URL del servidor Ollama |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct-q4_K_M` | Modelo de chat |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Modelo de embeddings; cambiarlo exige reindexar |
@@ -220,15 +220,15 @@ a una base distinta.
 
 Timeouts recomendados:
 
-| Perfil | `OLLAMA_TIMEOUT` | `OLLAMA_STREAM_TIMEOUT` |
-|--------|------------------|-------------------------|
-| Modesto (CPU-only) | 300 | 400 |
-| Potente (NVIDIA) | 60–120 | 120–180 |
+| Perfil             | `OLLAMA_TIMEOUT` | `OLLAMA_STREAM_TIMEOUT` |
+|--------------------|------------------|-------------------------|
+| Modesto (CPU-only) | 300              | 400                     |
+| Potente (NVIDIA)   | 60–120           | 120–180                 |
 
 ## Endpoints de la API
 
 | Método | Ruta | Descripción |
-|--------|------|-------------|
+| -------- | ------ | ------------- |
 | `GET` | `/health` | Estado, modelos y cantidad de fragmentos indexados |
 | `POST` | `/api/v1/ask` | `{question, categoria?}` → `{answer, sources[{content, metadata, distance}]}` |
 | `POST` | `/api/v1/ask/stream` | Misma entrada; respuesta token por token en texto plano |
@@ -433,7 +433,7 @@ python scripts/dev.py rubric --database-url "postgresql+psycopg://usuario:clave@
 ```
 
 | Criterio | Sin flags | Con `--live-ai` | Con `--database-url` |
-|----------|-----------|-----------------|----------------------|
+| ---------- | ----------- | ----------------- | ---------------------- |
 | 1. Rendimiento de IA local | índice, dimensiones, modelos instalados, presupuesto de RAM, frase de rechazo | p50/p95, primer token, fidelidad al contexto, rechazo fuera de dominio, inyección de prompt | — |
 | 2. Endpoints y lógica | inventario OpenAPI, `/health`, PQRSD, plazos hábiles, máquina de estados, paginación, ausencia de rutas legacy | respuesta con fuentes, streaming, `/sync-kb` con `--live-ingest` | alta, consulta y transición de punta a punta con `--db-write` |
 | 3. Validación y seguridad | payloads inválidos, tipos, categoría inexistente, errores 5xx, higiene de secretos | resistencia a inyección de prompt | 404 de radicado inexistente |
@@ -452,7 +452,7 @@ una brecha o una prueba sin ejecutar.
 El `docker-compose.yml` es CPU-only y define tres servicios:
 
 | Servicio | Imagen | Puerto | Datos |
-|----------|--------|--------|-------|
+| ---------- | -------- | -------- | ------- |
 | `ollama` | `ollama/ollama` | `11434` | Volumen `ollama` |
 | `open-webui` | `ghcr.io/open-webui/open-webui:main` | `3000` | Volumen `open-webui` |
 | `postgres` | `postgres:16-alpine` | `127.0.0.1:5432` | Volumen `postgres-data`, más `db/schema.sql` y `db/seed.sql` |
