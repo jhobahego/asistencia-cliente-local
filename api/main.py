@@ -1,12 +1,10 @@
 """FastAPI service exposing the local vector RAG over Ollama.
 
-Canonical endpoints live under ``/api/v1``. The legacy ``/v1/chat`` pair is
-kept as an additive compatibility layer for existing clients.
+All endpoints live under ``/api/v1``.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -14,10 +12,12 @@ from typing import Annotated, Any
 import httpx
 import ollama
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import DBAPIError
 
 from api import config
+from api.db.router import router as pqrsd_router
 from api.rag import LocalVectorRAG
 
 # ollama-python rewrites httpx.ConnectError into the builtin ConnectionError,
@@ -58,13 +58,6 @@ class AskResponse(BaseModel):
     sources: list[SourceModel]
 
 
-class LegacyChatResponse(BaseModel):
-    """Legacy payload: answer plus unique source file names."""
-
-    answer: str
-    sources: list[str]
-
-
 _ASK_BODY_EXAMPLES = {
     "sin_categoria": {
         "summary": "No category filter",
@@ -86,6 +79,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="asistencia-cliente-local", lifespan=lifespan)
+app.include_router(pqrsd_router)
+
+
+@app.exception_handler(DBAPIError)
+async def _database_unreachable(request: Request, exc: DBAPIError) -> JSONResponse:
+    """A configured but unreachable database degrades to 503, never 500."""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Relational database is unreachable"},
+    )
 
 
 def _question(payload: AskRequest) -> str:
@@ -154,17 +157,6 @@ async def _prepare(
         raise _ollama_unavailable() from exc
     except Exception as exc:
         raise _internal_error() from exc
-
-
-def _source_files(chunks: list[dict[str, Any]]) -> list[str]:
-    """Unique source names, sorted, for the legacy response shape."""
-    return sorted(
-        {
-            str(chunk["metadata"]["source"])
-            for chunk in chunks
-            if chunk.get("metadata", {}).get("source")
-        }
-    )
 
 
 @app.get("/health")
@@ -239,52 +231,3 @@ async def sync_kb() -> dict[str, Any]:
             status_code=500, detail="Knowledge base sync failed"
         ) from exc
     return {"status": "ok", **stats}
-
-
-@app.post("/v1/chat", response_model=LegacyChatResponse)
-async def legacy_chat(payload: AskRequest, request: Request) -> LegacyChatResponse:
-    """Legacy endpoint kept for existing clients."""
-    rag: LocalVectorRAG = request.app.state.rag
-    question = _question(payload)
-    categoria = await _category(rag, payload.categoria)
-    result = await _answer(
-        rag,
-        request.app.state.semaphore,
-        question,
-        categoria,
-    )
-    return LegacyChatResponse(
-        answer=result["answer"],
-        sources=_source_files(result["sources"]),
-    )
-
-
-@app.post("/v1/chat/stream")
-async def legacy_chat_stream(
-    payload: AskRequest, request: Request
-) -> StreamingResponse:
-    """Legacy SSE stream: sources first, then deltas, then [DONE]."""
-    rag: LocalVectorRAG = request.app.state.rag
-    semaphore: asyncio.Semaphore = request.app.state.semaphore
-    question = _question(payload)
-    categoria = await _category(rag, payload.categoria)
-    chunks = await _prepare(rag, question, categoria)
-    sources = _source_files(chunks)
-
-    async def events() -> AsyncIterator[str]:
-        yield f"data: {json.dumps({'sources': sources})}\n\n"
-        try:
-            async with semaphore:
-                async for token in rag.stream_answer(question, chunks):
-                    yield f"data: {json.dumps({'delta': token})}\n\n"
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            yield (
-                "data: "
-                + json.dumps({"error": f"Ollama unavailable: {exc}"})
-                + "\n\n"
-            )
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(events(), media_type="text/event-stream")

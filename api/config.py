@@ -78,5 +78,13 @@ CHROMA_DB_PATH = _resolve_path("CHROMA_DB_PATH", "./chroma_db")
 CHROMA_COLLECTION = _env("CHROMA_COLLECTION", "asistencia_cliente_kb")
 KNOWLEDGE_BASE_DIR = _resolve_path("KNOWLEDGE_BASE_DIR", "./knowledge_base")
 
+# Optional relational backend (PQRSD case file). Empty means "not configured":
+# the RAG service keeps working and the case endpoints answer 503.
+DATABASE_URL = _env("DATABASE_URL", "")
+DB_POOL_SIZE = _env_int("DB_POOL_SIZE", 5, minimum=1)
+DB_POOL_TIMEOUT = _env_int("DB_POOL_TIMEOUT", 10, minimum=1)
+DB_CONNECT_TIMEOUT = _env_int("DB_CONNECT_TIMEOUT", 5, minimum=1)
+DB_ECHO = _env("DB_ECHO", "false").lower() in {"1", "true", "yes", "on"}
+
 OLLAMA_TIMEOUT = _env_float("OLLAMA_TIMEOUT", 300)
 OLLAMA_STREAM_TIMEOUT = _env_float("OLLAMA_STREAM_TIMEOUT", 400)

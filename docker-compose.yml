@@ -18,6 +18,37 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
 
+  # Relational store for the citizen-service endpoints (/api/v1/pqrsd).
+  # Document chunks and embeddings stay in chroma_db/; this database only holds
+  # the catalogs, the case file and the audit trail.
+  # Bound to loopback on purpose: it uses a development password and the API
+  # runs on the host, so it must not be reachable from the network.
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-asistencia}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-asistencia}
+      - POSTGRES_DB=${POSTGRES_DB:-asistencia}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Applied by the official entrypoint only when the data directory is
+      # empty (first boot). To re-seed: docker compose down -v && up again.
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-asistencia} -d ${POSTGRES_DB:-asistencia}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # 7.2 GB box shared with Ollama: keep the default 128 MB shared_buffers and
+    # give parallel workers enough /dev/shm to avoid resize errors.
+    shm_size: 128mb
+
 volumes:
   ollama:
   open-webui:
+  postgres-data:

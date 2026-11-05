@@ -79,40 +79,34 @@ question ──embed(query)──> retrieve top_k ──hybrid gate──> promp
 | `api/lexical.py` | Spanish lexical evidence used as the precision gate |
 | `api/ingest.py` | Markdown/PDF chunking, deterministic IDs, prune, upsert, `--reset` |
 | `api/rag.py` | `LocalVectorRAG`: retrieval, gate, prompt, ask/stream |
-| `api/main.py` | FastAPI lifespan, semaphore, canonical + legacy endpoints |
+| `api/main.py` | FastAPI lifespan, semaphore, canonical endpoints |
+| `api/db/` | Optional PostgreSQL layer: lazy engine, session dependency, models, Pydantic schemas, PQRSD repository, router and business-day deadlines |
 | `api/system_prompt.txt` | Grounding rules and the exact refusal string |
 | `knowledge_base/` | **Only** indexed corpus (`.md` and `.pdf`) |
 | `docs/` | Meta-documentation (`MODELOS.md`, `BENCHMARK.md`, `EVALUACION.md`), not indexed |
-| `scripts/ingest.sh` | Run `python -m api.ingest` (config loads `.env`) |
-| `scripts/run-api.sh` / `run-api.ps1` | Launch uvicorn on the `API_PORT` from config |
-| `scripts/smoke-test.sh` | End-to-end checks against a running API |
-| `scripts/test-local.sh` | Ollama, compose, models, `compileall` checks |
+| `scripts/dev.py` | Cross-platform CLI: `setup`, `models`, `ingest`, `api`, `smoke`, `check`, `rubric`, `db-init`; re-executes in `.venv` |
+| `scripts/rubric_check.py` | KODO TAKAI rubric bench: executable evidence per criterion, estimated score and open gaps |
+| `scripts/check_schema.py` | Offline guard: models vs `db/schema.sql`, Pydantic rejections, business-day arithmetic |
+| `db/schema.sql` | PostgreSQL 13+ DDL: 28 tables, constraints, triggers, `next_radicado`, reporting view, RLS notes |
+| `db/seed.sql` | Catalog seed data taken verbatim from the manuals |
 | `chroma_db/` | Generated index; gitignored, never commit |
 
 ## Setup from zero
 
+The same commands work on Linux, macOS, and Windows:
+
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r api/requirements.txt
-cp -n .env.example .env              # optional; skip if .env exists
-bash scripts/pull-models.sh          # chat + embedding models, once
-bash scripts/ingest.sh               # builds chroma_db/, ~30-40 s here
-bash scripts/run-api.sh              # uvicorn on API_PORT from config
+docker compose up -d                 # optional: Ollama + Open WebUI
+python scripts/dev.py setup         # creates .venv, installs deps, seeds .env
+python scripts/dev.py models        # chat + embedding models, once
+python scripts/dev.py ingest        # builds chroma_db/, ~30-40 s here
+python scripts/dev.py api           # uvicorn on API_PORT from config
 ```
 
-Windows PowerShell:
-
-```powershell
-python -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -r api/requirements.txt
-Copy-Item .env.example .env          # optional; skip if .env exists
-$model = python -c "from api import config; print(config.OLLAMA_MODEL)"
-$embed = python -c "from api import config; print(config.OLLAMA_EMBED_MODEL)"
-ollama pull $model
-ollama pull $embed
-python -m api.ingest
-.\scripts\run-api.ps1
-```
+`scripts/dev.py` re-executes itself with the repository `.venv` interpreter,
+so activating the virtual environment is unnecessary. Use `python3` on
+Linux/macOS when `python` is not on `PATH`, and `py -3` on Windows when the
+`python` launcher is not on `PATH`.
 
 ## Environment variables
 
@@ -121,7 +115,7 @@ python -m api.ingest
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct-q4_K_M` | Chat model |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model; change requires re-index |
-| `API_PORT` | `8000` | Port used by the launcher scripts; not read by `api/main.py` |
+| `API_PORT` | `8000` | Port used by `scripts/dev.py api` and `smoke`; not read by `api/main.py` |
 | `RAG_TOP_K` | `4` | Retrieved chunks before the gate |
 | `RAG_MAX_DISTANCE` | `0.50` | Cosine distance ceiling |
 | `RAG_STRONG_DISTANCE` | `0.25` | Distance accepted without lexical evidence |
@@ -133,6 +127,12 @@ python -m api.ingest
 | `TEMPERATURE` | `0.2` | `0.0` makes refusal/answer behavior more deterministic |
 | `OLLAMA_TIMEOUT` | `300` | Full answer timeout (seconds) |
 | `OLLAMA_STREAM_TIMEOUT` | `400` | Stream timeout (seconds) |
+| `DATABASE_URL` | *(empty)* | PostgreSQL URL (`postgresql+psycopg://...`); empty disables the relational layer and leaves the RAG intact |
+| `DB_POOL_SIZE` | `5` | SQLAlchemy pool size |
+| `DB_POOL_TIMEOUT` | `10` | Seconds to wait for a free pooled connection |
+| `DB_CONNECT_TIMEOUT` | `5` | Connect timeout; a dead host answers 503 fast instead of hanging the request |
+| `DB_ECHO` | `false` | Echo generated SQL |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `asistencia` | Compose-only: credentials and database created by the `postgres` service. Not read by `api/config.py` |
 
 `.env` is optional. `api/config.py` loads it from the repository root with
 `python-dotenv` at import time; variables already exported in the process
@@ -185,8 +185,11 @@ AND (distance <= RAG_STRONG_DISTANCE OR lexical_evidence(query, chunk) > 0)
 | `POST` | `/api/v1/ask` | `{question, categoria?}` → `{answer, sources[{content, metadata, distance}]}` |
 | `POST` | `/api/v1/ask/stream` | Same input; plain-text token stream |
 | `POST` | `/api/v1/sync-kb` | Re-indexes in a worker thread; returns ingest stats |
-| `POST` | `/v1/chat` | Legacy compatibility; `sources` is `list[str]` |
-| `POST` | `/v1/chat/stream` | Legacy SSE: `sources` → `delta` → `[DONE]` |
+| `POST` | `/api/v1/pqrsd` | Files a case; returns the assigned `radicado` and its deadline |
+| `GET` | `/api/v1/pqrsd` | Lists cases; filters `estado`, `dependencia_id`, `limit`, `offset` |
+| `GET` | `/api/v1/pqrsd/{radicado}` | Reads one case with its state log and attachments |
+| `PATCH` | `/api/v1/pqrsd/{radicado}` | Moves the case to another status and logs the transition |
+| `POST` | `/api/v1/pqrsd/{radicado}/anexos` | Attaches a SHA-256 file hash to the case |
 
 `categoria` is an exact match on the indexed `categoria` metadata values (the
 `#` headings). An unknown value returns `422` with the indexed values in
@@ -196,13 +199,34 @@ disable the filter.
 ## Operations
 
 - Add or edit a document: put it under `knowledge_base/`, then
-  `bash scripts/ingest.sh` (or `POST /api/v1/sync-kb`). A 3B answer is not
+  `python scripts/dev.py ingest` (or `POST /api/v1/sync-kb`). A 3B answer is not
   affected, but ingestion takes ~30–40 s for this corpus.
 - First run after cloning: ingest before querying. `/health` showing
   `kb_chunks: 0` means every answer will be the refusal.
 - Changing the embedding model: update `OLLAMA_EMBED_MODEL`, run
-  `python -m api.ingest --reset`, and re-measure the gate. Never mix spaces.
+  `python scripts/dev.py ingest --reset`, and re-measure the gate. Never mix
+  spaces.
 - Deleting `chroma_db/` is safe: it is a generated artifact.
+- Start the relational store with `docker compose up -d postgres`; the official
+  entrypoint loads `db/schema.sql` and `db/seed.sql` on first boot, so
+  `DATABASE_URL=postgresql+psycopg://asistencia:asistencia@localhost:5432/asistencia`
+  works immediately. Init scripts run only on an empty data volume: to re-seed,
+  `docker compose down -v` and start it again.
+- Without Docker, create the schema from the models:
+  `python scripts/dev.py db-init --seed`. It runs `Base.metadata.create_all()`
+  and replays the objects SQLAlchemy cannot express (the `pg_trgm` extension,
+  the trigger functions, the triggers and the reporting view) from
+  `db/schema.sql`, so both routes behave the same. Add `--reset` to drop the
+  mapped tables first; `--from-schema` executes the DDL verbatim instead.
+  Without `DATABASE_URL` those routes answer 503 and the RAG keeps working.
+  `db/schema.sql` stays the reference DDL and the artifact
+  `scripts/check_schema.py` validates the models against.
+- Holidays are not seeded. Load the official Colombian calendar into `festivo`;
+  otherwise business-day deadlines only skip weekends.
+- The `radicado` is assigned by the `secuencia_radicado` correlative through
+  `next_radicado(p_vigencia integer)`, and a trigger rejects any `UPDATE` on the
+  column. Do not generate it in the application. The helper takes the year as an
+  integer, so `select next_radicado(2091)` works without a cast.
 - Do not run ingestion concurrently with a heavy query on this machine; both
   compete for the embedding/chat models and RAM.
 - Chroma telemetry is disabled in both `ingest.py` and `rag.py`.
@@ -212,15 +236,23 @@ disable the filter.
 Run these before reporting the feature complete:
 
 ```bash
-bash scripts/test-local.sh                 # Ollama + compose + models + compileall
-bash scripts/ingest.sh                     # twice; same collection_count both times
-bash scripts/run-api.sh &
-bash scripts/smoke-test.sh                 # health, on-domain, off-domain, stream
+python scripts/dev.py check                # Ollama + compose + models + compileall
+python scripts/dev.py rubric               # rubric bench: contract, validation, model state
+python scripts/check_schema.py             # models vs db/schema.sql, contracts, deadlines
+python scripts/dev.py ingest               # twice; same collection_count both times
+python scripts/dev.py api                  # in one terminal
+python scripts/dev.py smoke                # in another terminal
 ```
 
-Expected: `/health` has `kb_chunks: 10` for the sample FAQ; the on-domain
-question returns a non-empty answer and sources; the off-domain question
-returns `sources: []` and the exact refusal; the stream returns text.
+Expected: `/health` has `kb_chunks` greater than 0 (504 with the current
+manuals); the on-domain question returns a non-empty answer and sources; the
+off-domain question returns `sources: []` and the exact refusal; the stream
+returns text.
+
+`python scripts/dev.py rubric --database-url "$DATABASE_URL" --db-write` is the
+only check that exercises the relational schema (constraints, triggers, audit
+trail, radicado and concurrency). Without a database that criterion is reported
+as unverifiable, not as passed.
 
 TDD exception: the repo has no pytest dependency or test suite. The runnable
 checks are `compileall`, ingest idempotency and the end-to-end smoke test.
@@ -232,9 +264,18 @@ observed.
 - The 3B model occasionally over-refuses a paraphrase even when the correct
   chunk is in context (safe failure). Lower `TEMPERATURE` to `0.0` for more
   deterministic behavior, or use a larger chat model when hardware allows.
+- The system prompt does not calculate quotes: the 3B model fails the
+  arithmetic (measured `50 × 40 × 30` as 37.500 and then 30 kg). It reports
+  the route rates from CONTEXT and leaves the total to the cotizador.
 - PDF ingestion is implemented but this corpus has no PDF, so the real PDF
   path is not exercised end to end. Add a small PDF and re-run the smoke test
   before relying on it.
+- Docker is not installed on this machine, so the `postgres` compose service
+  cannot be used here. The schema is created instead with
+  `python scripts/dev.py db-init`, which was executed against a local
+  PostgreSQL 18.6 server: 28 tables, 9 triggers, the reporting view and the
+  seeded catalogs. The rubric bench's database criterion still requires
+  `python scripts/dev.py rubric --database-url ... --db-write`.
 - `api/system_prompt.txt` is re-read on every request; context headers are
   deliberately placed at the END of each block (source labels first caused the
   3B model to echo the header instead of answering).

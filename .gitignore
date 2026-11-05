@@ -7,3 +7,6 @@ open-webui/
 *.gguf
 chroma_db/
 .atl/
+
+response_*.json
+
