@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "skills": {
+    "api-design-patterns": {
+      "source": "asyrafhussin/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/api-design-patterns/SKILL.md",
+      "computedHash": "3f15c74774287c26486439158e2f7454907b6751fbd2e7842f034555e47df796"
+    },
+    "async-python-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/async-python-patterns/SKILL.md",
+      "computedHash": "35bc80697c3ba879e32cee7e2728ed2db0d16499875bb718736fd1160fddc2d6"
+    },
+    "docker-compose-helper": {
+      "source": "tmhsdigital/docker-developer-tools",
+      "sourceType": "github",
+      "skillPath": "skills/docker-compose-helper/SKILL.md",
+      "computedHash": "c51d7e356bf6645ab4c78400ad3d9fc3342555550a8de9470c956cfee790df70"
+    },
+    "fastapi-endpoint": {
+      "source": "black141312/ada",
+      "sourceType": "github",
+      "skillPath": "skills/fastapi-endpoint/SKILL.md",
+      "computedHash": "98c1d6038ba86ac1f40764664aa824fec38c78fb3f647d5814749f6cb609ee76"
+    },
+    "fastapi-templates": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/api-scaffolding/skills/fastapi-templates/SKILL.md",
+      "computedHash": "708046a283cd90c03bb4e160857eedcf9179244d4f0a36d3de8f266ffa472acc"
+    },
+    "pg-graph": {
+      "source": "microsoft/postgres-skills",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/pg-graph/SKILL.md",
+      "computedHash": "d0b5d1e0566607355a610f0fcb81af6ae5ad420eefd51e4c87cfc58ad2158ec9"
+    },
+    "postgresql-best-practices": {
+      "source": "microsoft/postgres-skills",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/postgresql-best-practices/SKILL.md",
+      "computedHash": "0bbab09e5431bf3407ad20d456155ee0131b9f2b7a787063dc36f7044688aa02"
+    },
+    "postgresql-table-design": {
+      "source": "chidekina/aria-superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/postgresql-table-design/SKILL.md",
+      "computedHash": "0728424e6f56972333bd60e4f45da0322ac6db273744d863aa2b94f1e95d61ec"
+    },
+    "pydantic": {
+      "source": "pydantic/skills",
+      "sourceType": "github",
+      "skillPath": "skills/pydantic/SKILL.md",
+      "computedHash": "65f68dbab0f7e60bfd26998350d674a104848daf23311067e0829758a7cf6f91"
+    },
+    "python-testing-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-testing-patterns/SKILL.md",
+      "computedHash": "cfec3cbf4023ac0336f37bb28991824d87cc9e92758e4615e1e5d85c5f2ceeed"
+    },
+    "rag-implementation": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/llm-application-dev/skills/rag-implementation/SKILL.md",
+      "computedHash": "595e221310222b991452ac6d850097b466fbda46860c9ce933ddd56a0998dac9"
+    },
+    "systematic-debugging": {
+      "source": "lodebla/agent-plus",
+      "sourceType": "github",
+      "skillPath": "skills/systematic-debugging/SKILL.md",
+      "computedHash": "a7d025daf09c2ae5d75c0e91208b7d9109ddf2df269c0a6a2a2b27022796eeba"
+    },
+    "update-plugin-release": {
+      "source": "microsoft/postgres-skills",
+      "sourceType": "github",
+      "skillPath": ".github/skills/update-plugin-release/SKILL.md",
+      "computedHash": "c4e8eb6805fee7d1dd0249ed6e7d24cd16c6164a59eec28b3b5a7ab287788d14"
+    }
+  }
+}
