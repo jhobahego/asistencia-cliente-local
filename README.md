@@ -128,10 +128,16 @@ Sin Docker no hay Open WebUI en `http://localhost:3000`; la API en
 `http://localhost:8000` funciona igual porque solo necesita
 `http://localhost:11434`.
 
+Si Ollama ya corre como servicio (systemd en Linux, app de escritorio en
+macOS/Windows), no ejecutes `ollama serve` otra vez ni levantes además el
+contenedor con `docker compose up -d`: ambos usan el puerto `11434` y fallan
+con `address already in use`.
+
 ```bash
 # 1. Instalar Ollama (una sola vez): https://ollama.com/download
-# 2. Iniciar el servidor en otra terminal
-ollama serve
+# 2. Verificar el servidor (si ya corre como servicio, omitir `ollama serve`)
+ollama list    # responde con los modelos instalados
+ollama serve   # solo si el anterior falló; dejarlo en otra terminal
 
 # 3. Entorno, dependencias y modelos
 python scripts/dev.py setup
