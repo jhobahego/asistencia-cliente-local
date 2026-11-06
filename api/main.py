@@ -5,8 +5,10 @@ All endpoints live under ``/api/v1``.
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import json
 from typing import Annotated, Any
 
 import httpx
@@ -215,7 +217,23 @@ async def ask_stream(
         except Exception as exc:  # headers are already sent, so mark the body
             yield f"\n[stream error: {exc}]"
 
-    return StreamingResponse(tokens(), media_type="text/plain; charset=utf-8")
+    sources_payload = [
+        {
+            "content": c.get("content"),
+            "metadata": c.get("metadata", {}),
+            "distance": c.get("distance", 0.0),
+        }
+        for c in chunks
+    ]
+    encoded_sources = base64.b64encode(
+        json.dumps(sources_payload).encode("utf-8")
+    ).decode("ascii")
+
+    return StreamingResponse(
+        tokens(),
+        media_type="text/plain; charset=utf-8",
+        headers={"X-Sources-Base64": encoded_sources},
+    )
 
 
 @app.post("/api/v1/sync-kb")
