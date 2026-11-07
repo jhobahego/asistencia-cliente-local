@@ -60,7 +60,7 @@ Migrating to Clean Architecture separates concerns cleanly:
 - [x] **TASK-3**: Infrastructure & Repositories (`app/infrastructure/ollama.py`, `app/infrastructure/lexical.py`, `app/repositories/vector_repository.py`, `app/repositories/pqrsd_repository.py`)
 - [x] **TASK-4**: Services Layer (`app/services/rag_service.py`, `app/services/ingest_service.py`, `app/services/pqrsd_service.py`)
 - [x] **TASK-5**: Presentation Layer & Dependency Injection (`app/api/dependencies.py`, `app/api/v1/router.py`, `app/api/v1/endpoints/health.py`, `app/api/v1/endpoints/rag.py`, `app/api/v1/endpoints/pqrsd.py`, `app/main.py`)
-- [ ] **TASK-6**: Retrocompatibility Facades & CLI (`api/` modules forwarding to `app/`, `api/db/` forwarding to `app/`, `scripts/dev.py`)
+- [x] **TASK-6**: Retrocompatibility Facades & CLI (`api/` modules forwarding to `app/`, `api/db/` forwarding to `app/`, `scripts/dev.py`)
 - [ ] **TASK-7**: Pytest Automated Test Suite (`tests/conftest.py`, `tests/unit/`, `tests/integration/`)
 - [ ] **TASK-8**: Verification & Benchmark (`scripts/dev.py check`, `pytest tests/`, `scripts/check_schema.py`, `scripts/rubric_check.py`, `scripts/dev.py smoke`)
 
@@ -70,7 +70,7 @@ Migrating to Clean Architecture separates concerns cleanly:
 - `TASK-2`: Commit a687b5f. 28 tables and 180 columns in app/models match db/schema.sql, strict Pydantic schemas with extra forbid.
 - `TASK-3`: Commit 0f260c2. Vector and PQRSD repositories operational with ChromaDB and PostgreSQL, Spanish lexical gate and Ollama client.
 - `TASK-4`: Commit 173be1e. Services functional with decoupled RAGService, IngestService and PqrsdService.
-- `TASK-5`: Endpoints respond with expected schemas and DI overrides via Depends.
-- `TASK-6`: Backward compatibility intact; legacy `api.*` imports work without modification.
+- `TASK-5`: Commit 3e337f2. Endpoints respond with expected schemas and DI overrides via Depends.
+- `TASK-6`: Backward compatibility intact; legacy api.* imports work without modification, dev.py updated.
 - `TASK-7`: Pytest suite passes 100%.
 - `TASK-8`: Rubric check passes, C3.2 is green, smoke tests pass.

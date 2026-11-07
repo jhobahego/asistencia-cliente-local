@@ -246,7 +246,12 @@ def _api(args: argparse.Namespace, extras: list[str]) -> int:
     from api import config
 
     port = args.port if args.port is not None else config.API_PORT
-    command = [sys.executable, "-m", "uvicorn", "api.main:app", "--port", str(port)]
+    app_target = (
+        "app.main:app"
+        if (REPO_ROOT / "app" / "main.py").exists()
+        else "api.main:app"
+    )
+    command = [sys.executable, "-m", "uvicorn", app_target, "--port", str(port)]
     if args.host is not None:
         command.extend(["--host", args.host])
     if args.reload:
@@ -492,7 +497,7 @@ def _check(_args: argparse.Namespace, _extras: list[str]) -> int:
                     )
                     failures += 1
 
-    for relative in ("api", "scripts"):
+    for relative in ("app", "api", "scripts"):
         if compileall.compile_dir(str(REPO_ROOT / relative), quiet=1):
             print(f"PASS: compileall {relative}/")
         else:
