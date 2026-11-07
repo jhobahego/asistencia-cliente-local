@@ -4,7 +4,7 @@ The repository offers two bootstraps for the same database:
 
 ``models``
     ``Base.metadata.create_all()`` creates tables, columns, constraints and
-    indexes from ``api/db/models.py``, which is the single source of truth for
+    indexes from ``app/models/pqrsd.py``, which is the single source of truth for
     the table shape. The objects SQLAlchemy cannot express portably - the
     ``pg_trgm`` extension, the trigger functions, the triggers and the
     reporting view - are replayed from ``db/schema.sql`` in two phases around
@@ -30,8 +30,8 @@ from pathlib import Path
 
 from sqlalchemy import Engine
 
-from api import config
-from api.db.models import Base
+from app.core import config
+from app.models.pqrsd import Base
 
 SCHEMA_SQL = config.REPO_ROOT / "db" / "schema.sql"
 SEED_SQL = config.REPO_ROOT / "db" / "seed.sql"
@@ -181,7 +181,7 @@ def split_objects(sql: str) -> tuple[list[str], list[str]]:
         else:
             raise BootstrapError(
                 "db/schema.sql contains a statement the model bootstrap cannot "
-                f"classify; teach api/db/bootstrap.py where it belongs: {head[:80]!r}"
+                f"classify; teach app/core/bootstrap.py where it belongs: {head[:80]!r}"
             )
     return before, after
 

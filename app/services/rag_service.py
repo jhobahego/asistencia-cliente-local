@@ -12,7 +12,7 @@ from app.infrastructure.ollama import OllamaChatClient, OllamaEmbedder
 from app.repositories.vector_repository import VectorRepository
 
 PROMPT_PATH = (
-    Path(__file__).resolve().parent.parent.parent / "api" / "system_prompt.txt"
+    Path(__file__).resolve().parent.parent / "core" / "system_prompt.txt"
 )
 EMPTY_CONTEXT = "NO SE ENCONTRÓ INFORMACIÓN RELEVANTE EN LA BASE DE CONOCIMIENTO."
 REFUSAL_STRING = "No tengo esa información en mi base local"

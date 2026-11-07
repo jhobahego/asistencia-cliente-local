@@ -63,6 +63,7 @@ Migrating to Clean Architecture separates concerns cleanly:
 - [x] **TASK-6**: Retrocompatibility Facades & CLI (`api/` modules forwarding to `app/`, `api/db/` forwarding to `app/`, `scripts/dev.py`)
 - [x] **TASK-7**: Pytest Automated Test Suite (`tests/conftest.py`, `tests/unit/`, `tests/integration/`)
 - [x] **TASK-8**: Verification & Benchmark (`scripts/dev.py check`, `pytest tests/`, `scripts/check_schema.py`, `scripts/rubric_check.py`, `scripts/dev.py smoke`)
+- [x] **TASK-9**: Decommission `api/` directory: relocate active resources (`bootstrap.py`, `system_prompt.txt`, `requirements.txt`), update scripts (`check_schema.py`, `rubric_check.py`, `dev.py`), remove `api/`, update docs, and verify all tests.
 
 ## Verification Evidence
 
@@ -74,3 +75,4 @@ Migrating to Clean Architecture separates concerns cleanly:
 - `TASK-6`: Commit 3c5eb8c. Backward compatibility intact; legacy api.* imports work without modification, dev.py updated.
 - `TASK-7`: Commit e835444. Pytest suite passes 100% (70 tests in 3.24s).
 - `TASK-8`: Rubric check passes with 43/60 (71.3%), C3.2 is green (extra='forbid' verified), dev.py check passes, check_schema passes, and 70/70 pytest tests pass.
+- `TASK-9`: Decommissioned api/ directory, relocated bootstrap.py, system_prompt.txt, and requirements.txt, updated all scripts and documentation, 70/70 tests pass.
