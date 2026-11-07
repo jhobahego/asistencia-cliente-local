@@ -56,7 +56,7 @@ Migrating to Clean Architecture separates concerns cleanly:
 ## Tasks
 
 - [x] **TASK-1**: Core & Domain Layer (`app/core/config.py`, `app/core/database.py`, `app/core/exceptions.py`, `app/domain/exceptions.py`, `app/domain/plazos.py`)
-- [ ] **TASK-2**: Models & Schemas Layer (`app/models/pqrsd.py`, `app/schemas/base.py`, `app/schemas/rag.py`, `app/schemas/pqrsd.py`, `app/schemas/catalogs.py`)
+- [x] **TASK-2**: Models & Schemas Layer (`app/models/pqrsd.py`, `app/schemas/base.py`, `app/schemas/rag.py`, `app/schemas/pqrsd.py`, `app/schemas/catalogs.py`)
 - [ ] **TASK-3**: Infrastructure & Repositories (`app/infrastructure/ollama.py`, `app/infrastructure/lexical.py`, `app/repositories/vector_repository.py`, `app/repositories/pqrsd_repository.py`)
 - [ ] **TASK-4**: Services Layer (`app/services/rag_service.py`, `app/services/ingest_service.py`, `app/services/pqrsd_service.py`)
 - [ ] **TASK-5**: Presentation Layer & Dependency Injection (`app/api/dependencies.py`, `app/api/v1/router.py`, `app/api/v1/endpoints/health.py`, `app/api/v1/endpoints/rag.py`, `app/api/v1/endpoints/pqrsd.py`, `app/main.py`)
@@ -66,7 +66,7 @@ Migrating to Clean Architecture separates concerns cleanly:
 
 ## Verification Evidence
 
-- `TASK-1`: Verified import and evaluation of config, database, and plazos.
+- `TASK-1`: Commit 9656d12. Verified import and evaluation of config, database, exceptions and plazos.
 - `TASK-2`: `python3 scripts/check_schema.py` passes 28 tables and 180 columns.
 - `TASK-3`: Vector and PQRSD repositories operational.
 - `TASK-4`: Services functional with mocked/real dependencies.
